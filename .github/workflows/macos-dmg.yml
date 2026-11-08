@@ -17,6 +17,9 @@ on:
 jobs:
   dmg:
     runs-on: macos-latest
+    env:
+      # secrets no puede usarse en un if de paso; sí en env del job.
+      HAS_CERT: ${{ secrets.CSC_LINK != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,7 +27,7 @@ jobs:
           node-version: '22'
           cache: npm
       - name: Importar certificado Developer ID
-        if: ${{ secrets.CSC_LINK != '' }}
+        if: ${{ env.HAS_CERT == 'true' }}
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
