@@ -17,8 +17,9 @@ import {
 import { upcomingEvents, calendarErrors, clearCalendarCache, type CalEvent } from './calendar.ts';
 import { detectorState, startDetector, startCalendarWatcher } from './detector.ts';
 import { enhanceMeeting, extractActionItems, chat, brief, identifySpeakers } from './ai.ts';
-import { providerAvailable } from './llm.ts';
+import { anyLlmAvailable } from './llm.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
+import { createMeeting, linkAttendees } from './meetings.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
 const execFileP = promisify(execFile);
@@ -57,34 +58,6 @@ const ah = (fn: (req: any, res: Response) => any) => async (req: Request, res: R
 };
 
 // ---------- helpers ----------
-const FREE_DOMAINS = /^(gmail|googlemail|hotmail|outlook|live|yahoo|icloud|me|proton|protonmail|msn|aol)\./i;
-
-function linkAttendees(meetingId: string, attendees: { name?: string; email?: string; self?: boolean }[]) {
-  const selfEmails = getSetting<string[]>('selfEmails', []).map((e) => e.toLowerCase());
-  for (const a of attendees) {
-    const email = (a.email || '').toLowerCase().trim();
-    if (a.self || (email && selfEmails.includes(email))) continue;
-    let person = email ? get('SELECT * FROM people WHERE email = ?', email) : a.name ? get('SELECT * FROM people WHERE lower(name) = lower(?)', a.name) : undefined;
-    if (!person) {
-      let companyId: string | null = null;
-      const domain = email.split('@')[1];
-      if (domain && !FREE_DOMAINS.test(domain)) {
-        let c = get('SELECT * FROM companies WHERE domain = ?', domain);
-        if (!c) {
-          const name = domain.split('.').slice(-2, -1)[0] || domain;
-          run('INSERT INTO companies(id, name, domain, created_at) VALUES (?, ?, ?, ?)', uid('co_'), name.charAt(0).toUpperCase() + name.slice(1), domain, now());
-          c = get('SELECT * FROM companies WHERE domain = ?', domain);
-        }
-        companyId = c!.id;
-      }
-      const id = uid('pe_');
-      run('INSERT INTO people(id, name, email, company_id, created_at) VALUES (?, ?, ?, ?, ?)', id, a.name || email.split('@')[0] || 'Sin nombre', email || null, companyId, now());
-      person = { id };
-    }
-    run('INSERT OR IGNORE INTO meeting_people(meeting_id, person_id) VALUES (?, ?)', meetingId, person.id);
-  }
-}
-
 function listMeetings(where = 'm.archived_at IS NULL', ...params: any[]) {
   return all(
     `SELECT m.id, m.title, m.created_at, m.started_at, m.ended_at, m.duration_ms, m.status, m.attendees, m.folder_id, m.summary,
@@ -143,6 +116,7 @@ app.get('/api/settings', ah(() => {
     echoCancellation: getSetting('echoCancellation', true),
     saveAudio: getSetting('saveAudio', false),
     autoDetect: getSetting('autoDetect', true),
+    autoRecord: getSetting('autoRecord', false),
     autoStopMinutes: getSetting('autoStopMinutes', 12),
     autoStopOnMeetingEnd: getSetting('autoStopOnMeetingEnd', true),
     autoEnhance: getSetting('autoEnhance', true),
@@ -150,6 +124,7 @@ app.get('/api/settings', ah(() => {
     calendars: getSetting('calendars', []),
     macCalendarEnabled: getSetting('macCalendarEnabled', false),
     claudeCliEnabled: getSetting('claudeCliEnabled', false),
+    codexCliEnabled: getSetting('codexCliEnabled', false),
     micDeviceUID: getSetting('micDeviceUID', ''),
     identifySpeakers: getSetting('identifySpeakers', true),
     models: { notes: defaultModel('notes'), chat: defaultModel('chat'), fast: defaultModel('fast') },
@@ -165,8 +140,8 @@ app.get('/api/settings', ah(() => {
 
 app.put('/api/settings', ah((req) => {
   const b = req.body || {};
-  const simple = ['userName', 'selfEmails', 'language', 'vocabulary', 'sttProvider', 'openaiSttModel', 'echoCancellation', 'saveAudio', 'autoDetect',
-    'autoStopMinutes', 'autoStopOnMeetingEnd', 'autoEnhance', 'calendarNotifyMinutes', 'calendars', 'macCalendarEnabled', 'claudeCliEnabled',
+  const simple = ['userName', 'selfEmails', 'language', 'vocabulary', 'sttProvider', 'openaiSttModel', 'echoCancellation', 'saveAudio', 'autoDetect', 'autoRecord',
+    'autoStopMinutes', 'autoStopOnMeetingEnd', 'autoEnhance', 'calendarNotifyMinutes', 'calendars', 'macCalendarEnabled', 'claudeCliEnabled', 'codexCliEnabled',
     'models', 'integrations', 'onboarded', 'localWhisperModel', 'micDeviceUID', 'identifySpeakers'];
   for (const k of simple) if (k in b) setSetting(k, b[k]);
   if (b.keys) {
@@ -194,22 +169,14 @@ app.get('/api/meetings', ah((req) => {
 
 app.post('/api/meetings', ah((req) => {
   const b = req.body || {};
-  const ev: CalEvent | undefined = b.calendarEvent;
-  if (ev) {
-    const existing = get('SELECT id FROM meetings WHERE calendar_event_id = ? AND archived_at IS NULL', ev.id);
-    if (existing) return { id: existing.id };
-  }
-  const id = uid('mt_');
-  const t = now();
-  const attendees = ev?.attendees || b.attendees || [];
-  run(
-    `INSERT INTO meetings(id, title, created_at, updated_at, calendar_event_id, calendar_start, attendees, folder_id, template_id, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    id, b.title ?? ev?.title ?? '', t, t, ev?.id || null, ev?.start || null, JSON.stringify(attendees), b.folderId || null, b.templateId || null, b.source || 'live',
-  );
-  linkAttendees(id, attendees);
-  reindexMeeting(id);
-  bus.emit('event', { type: 'meetings.changed' });
+  const { id } = createMeeting({
+    title: b.title,
+    calendarEvent: b.calendarEvent as CalEvent | undefined,
+    attendees: b.attendees,
+    folderId: b.folderId,
+    templateId: b.templateId,
+    source: b.source,
+  });
   return { id };
 }));
 
@@ -274,6 +241,17 @@ app.post('/api/meetings/:id/speakers', ah(async (req) => {
   const r = await identifySpeakers(req.params.id);
   bus.emit('event', { type: 'meeting.updated', meetingId: req.params.id });
   return r;
+}));
+
+app.post('/api/meetings/:id/speakers/rename', ah((req) => {
+  const from = String(req.body?.from || '');
+  let to = String(req.body?.to || '').trim().slice(0, 40);
+  if (!from || !to) throw new Error('Faltan el hablante y el nombre nuevo');
+  const me = getSetting<string>('userName', '');
+  if (/^(yo|me)$/i.test(to) || (me && to.toLowerCase() === me.toLowerCase())) to = 'me';
+  const r = run('UPDATE segments SET speaker = ? WHERE meeting_id = ? AND speaker = ?', to, req.params.id, from);
+  bus.emit('event', { type: 'meeting.updated', meetingId: req.params.id });
+  return { changed: Number(r.changes) };
 }));
 
 app.post('/api/meetings/:id/enhance', ah(async (req, res) => {
@@ -537,7 +515,7 @@ app.post('/api/import', express.raw({ type: '*/*', limit: '4gb' }), ah(async (re
     await session.stop();
     const dur = Number(get('SELECT MAX(end_ms) AS d FROM segments WHERE meeting_id = ?', id)?.d || 0);
     run("UPDATE meetings SET status = 'done', duration_ms = ?, ended_at = ? WHERE id = ?", dur, now(), id);
-    if (getSetting('identifySpeakers', true) && ['openai', 'groq', 'anthropic'].some((p) => providerAvailable(p as any))) {
+    if (getSetting('identifySpeakers', true) && anyLlmAvailable()) {
       await identifySpeakers(id).catch((e) => console.warn('[speakers]', e?.message));
     }
     reindexMeeting(id);

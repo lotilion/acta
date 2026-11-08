@@ -391,6 +391,24 @@ export async function stopRecording(reason = 'user') {
   const raws = Object.values(s.rawStreams).map((w) => (w as any)?.path as string).filter(Boolean);
   if (raws.length === 2) void mixAudio(s.meetingId, raws as string[]);
   bus.emit('event', { type: 'recording.stopped', meetingId: s.meetingId, reason, errors: s.errors.slice(-5) });
+  void identifySpeakersAfterStop(s.meetingId);
+}
+
+// The live channels only say me/them, but "them" is usually several people. After each
+// recording, the same LLM pass used for imports puts names on the fragments, in the background.
+async function identifySpeakersAfterStop(meetingId: string) {
+  try {
+    if (!getSetting('identifySpeakers', true)) return;
+    const them = get("SELECT COUNT(*) AS n FROM segments WHERE meeting_id = ? AND speaker = 'them'", meetingId)?.n || 0;
+    if (them < 2) return;
+    const { anyLlmAvailable } = await import('./llm.ts');
+    if (!anyLlmAvailable()) return;
+    const { identifySpeakers } = await import('./ai.ts');
+    const r = await identifySpeakers(meetingId);
+    if (r.changed) bus.emit('event', { type: 'meeting.updated', meetingId });
+  } catch (e: any) {
+    console.warn('[speakers]', e?.message || e);
+  }
 }
 
 function setStatus(meetingId: string, status: string) {

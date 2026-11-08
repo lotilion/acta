@@ -126,15 +126,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         break;
       case 'meeting.detected': {
-        const title = e.title && !/^Zoom Meeting$/i.test(e.title) ? e.title : `Reunión de ${e.app}`;
-        notify(`¿Tomamos notas?`, `Parece que estás en una llamada de ${e.app}.`, async () => { await newNote({ title, record: true }); });
-        toast(<span>Parece que estás en una llamada de <b>{e.app}</b>.</span>, { action: { label: 'Tomar notas', onClick: () => void newNote({ title, record: true }) } });
+        const ev: CalEvent | undefined = e.event || undefined;
+        const title = ev?.title || (e.title && !/^Zoom Meeting$/i.test(e.title) ? e.title : `Reunión de ${e.app}`);
+        const open = () => void newNote(ev ? { calendarEvent: ev, record: true } : { title, record: true });
+        if (e.autostart) {
+          // autoRecord is on but the server cannot capture by itself: the renderer records.
+          notify('Grabando la reunión', `Acta está transcribiendo «${title}».`);
+          open();
+          break;
+        }
+        notify(`¿Tomamos notas?`, ev ? `Parece que «${ev.title}» ha empezado en ${e.app}.` : `Parece que estás en una llamada de ${e.app}.`, open);
+        toast(<span>Parece que estás en una llamada de <b>{e.app}</b>{ev ? <>: <b>{ev.title}</b></> : null}.</span>, { action: { label: 'Tomar notas', onClick: open } });
+        break;
+      }
+      case 'recording.autostarted': {
+        notify('Grabando la reunión', `Acta está transcribiendo «${e.title}». Pulsa para abrir la nota.`, () => nav(`/nota/${e.meetingId}`));
+        toast(<span>Grabando <b>{e.title}</b> automáticamente.</span>, { action: { label: 'Abrir la nota', onClick: () => nav(`/nota/${e.meetingId}`) } });
+        void refreshMeetings();
         break;
       }
       case 'calendar.starting': {
         const ev: CalEvent = e.event;
-        notify(ev.title, 'Tu reunión empieza ahora. ¿Abrimos las notas?', async () => { await newNote({ calendarEvent: ev, record: true }); });
-        toast(<span><b>{ev.title}</b> empieza ahora.</span>, { action: { label: 'Tomar notas', onClick: () => void newNote({ calendarEvent: ev, record: true }) } });
+        const open = async (join: boolean) => {
+          if (join && ev.meetingUrl) window.open(ev.meetingUrl, '_blank');
+          await newNote({ calendarEvent: ev, record: true });
+        };
+        notify(ev.title, ev.meetingUrl ? 'Tu reunión empieza ahora. ¿Nos unimos y tomamos notas?' : 'Tu reunión empieza ahora. ¿Abrimos las notas?', () => void open(true));
+        toast(<span><b>{ev.title}</b> empieza ahora.</span>, { action: { label: ev.meetingUrl ? 'Unirse y tomar notas' : 'Tomar notas', onClick: () => void open(true) } });
         break;
       }
       case 'google.connected':
