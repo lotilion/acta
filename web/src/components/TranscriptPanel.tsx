@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Search, X } from 'lucide-react';
-import { fmtClock, type Segment } from '../api';
+import { api, fmtClock, type Segment } from '../api';
 import { useApp } from '../store';
-import { IconButton, cx, toast } from './ui';
+import { Button, IconButton, Input, Modal, cx, toast } from './ui';
+
+const SPEAKER_HUES = ['#7c8a3f', '#3f6f8a', '#8a5a3f', '#6f3f8a', '#8a3f55', '#3f8a6e'];
+function speakerColor(name: string) {
+  const h = [...name].reduce((a, c) => a + c.charCodeAt(0), 0) % SPEAKER_HUES.length;
+  return SPEAKER_HUES[h];
+}
 
 export function TranscriptPanel({ meetingId, segments, onClose }: { meetingId: string; segments: Segment[]; onClose: () => void }) {
   const { live, state } = useApp();
   const [q, setQ] = useState('');
   const [searching, setSearching] = useState(false);
+  const [rename, setRename] = useState<{ from: string; value: string } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const isLive = live?.meetingId === meetingId;
@@ -24,6 +31,18 @@ export function TranscriptPanel({ meetingId, segments, onClose }: { meetingId: s
   const copy = () => {
     const txt = segments.map((s) => `[${fmtClock(s.start_ms)}] ${label(s.speaker)}: ${s.text}`).join('\n');
     void navigator.clipboard.writeText(txt).then(() => toast('Transcripción copiada'));
+  };
+  const saveRename = async () => {
+    if (!rename) return;
+    const to = rename.value.trim();
+    if (!to || to === label(rename.from)) { setRename(null); return; }
+    try {
+      const r = await api.post<{ changed: number }>(`/api/meetings/${meetingId}/speakers/rename`, { from: rename.from, to });
+      toast(`${r.changed} ${r.changed === 1 ? 'intervención renombrada' : 'intervenciones renombradas'}`);
+    } catch (e: any) {
+      toast(e.message, { tone: 'error' });
+    }
+    setRename(null);
   };
 
   return (
@@ -55,7 +74,14 @@ export function TranscriptPanel({ meetingId, segments, onClose }: { meetingId: s
           return (
             <div key={s.id} className={cx('flex flex-col', mine ? 'items-end' : 'items-start')}>
               {showHead && (
-                <div className="mb-0.5 px-1 text-[11px] text-ink-4">{label(s.speaker)} · {fmtClock(s.start_ms)}</div>
+                <button
+                  onClick={() => !mine && setRename({ from: s.speaker, value: s.speaker === 'them' ? '' : s.speaker })}
+                  title={mine ? undefined : 'Renombrar a esta persona en toda la transcripción'}
+                  className={cx('mb-0.5 flex items-center gap-1.5 px-1 text-[11px] text-ink-4', !mine && 'cursor-pointer rounded hover:text-ink')}
+                >
+                  {!mine && <span className="h-1.5 w-1.5 rounded-full" style={{ background: speakerColor(s.speaker) }} />}
+                  {label(s.speaker)} · {fmtClock(s.start_ms)}
+                </button>
               )}
               <div className={cx('max-w-[88%] rounded-2xl px-3 py-1.5 text-[13px] leading-relaxed', mine ? 'rounded-br-md bg-accent-wash text-ink' : 'rounded-bl-md bg-soft text-ink')}>
                 {s.text}
@@ -71,6 +97,16 @@ export function TranscriptPanel({ meetingId, segments, onClose }: { meetingId: s
           </div>
         )}
       </div>
+      <Modal open={!!rename} onClose={() => setRename(null)} title={`¿Quién es «${rename ? label(rename.from) : ''}»?`} width={380}>
+        <form className="p-5" onSubmit={(e) => { e.preventDefault(); void saveRename(); }}>
+          <Input autoFocus value={rename?.value || ''} onChange={(e) => setRename((r) => (r ? { ...r, value: e.target.value } : r))} placeholder="Nombre de la persona" />
+          <div className="mt-2 text-[12px] text-ink-4">Se aplica a todas sus intervenciones en esta nota.</div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => setRename(null)}>Cancelar</Button>
+            <Button type="submit" variant="primary">Renombrar</Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
