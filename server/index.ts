@@ -17,7 +17,7 @@ import {
 import { upcomingEvents, calendarErrors, clearCalendarCache, type CalEvent } from './calendar.ts';
 import { detectorState, startDetector, startCalendarWatcher } from './detector.ts';
 import { enhanceMeeting, extractActionItems, chat, brief, identifySpeakers } from './ai.ts';
-import { providerAvailable } from './llm.ts';
+import { anyLlmAvailable } from './llm.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { createMeeting, linkAttendees } from './meetings.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
@@ -124,6 +124,7 @@ app.get('/api/settings', ah(() => {
     calendars: getSetting('calendars', []),
     macCalendarEnabled: getSetting('macCalendarEnabled', false),
     claudeCliEnabled: getSetting('claudeCliEnabled', false),
+    codexCliEnabled: getSetting('codexCliEnabled', false),
     micDeviceUID: getSetting('micDeviceUID', ''),
     identifySpeakers: getSetting('identifySpeakers', true),
     models: { notes: defaultModel('notes'), chat: defaultModel('chat'), fast: defaultModel('fast') },
@@ -140,7 +141,7 @@ app.get('/api/settings', ah(() => {
 app.put('/api/settings', ah((req) => {
   const b = req.body || {};
   const simple = ['userName', 'selfEmails', 'language', 'vocabulary', 'sttProvider', 'openaiSttModel', 'echoCancellation', 'saveAudio', 'autoDetect', 'autoRecord',
-    'autoStopMinutes', 'autoStopOnMeetingEnd', 'autoEnhance', 'calendarNotifyMinutes', 'calendars', 'macCalendarEnabled', 'claudeCliEnabled',
+    'autoStopMinutes', 'autoStopOnMeetingEnd', 'autoEnhance', 'calendarNotifyMinutes', 'calendars', 'macCalendarEnabled', 'claudeCliEnabled', 'codexCliEnabled',
     'models', 'integrations', 'onboarded', 'localWhisperModel', 'micDeviceUID', 'identifySpeakers'];
   for (const k of simple) if (k in b) setSetting(k, b[k]);
   if (b.keys) {
@@ -514,7 +515,7 @@ app.post('/api/import', express.raw({ type: '*/*', limit: '4gb' }), ah(async (re
     await session.stop();
     const dur = Number(get('SELECT MAX(end_ms) AS d FROM segments WHERE meeting_id = ?', id)?.d || 0);
     run("UPDATE meetings SET status = 'done', duration_ms = ?, ended_at = ? WHERE id = ?", dur, now(), id);
-    if (getSetting('identifySpeakers', true) && ['openai', 'groq', 'anthropic'].some((p) => providerAvailable(p as any))) {
+    if (getSetting('identifySpeakers', true) && anyLlmAvailable()) {
       await identifySpeakers(id).catch((e) => console.warn('[speakers]', e?.message));
     }
     reindexMeeting(id);

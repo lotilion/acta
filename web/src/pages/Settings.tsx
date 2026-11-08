@@ -138,6 +138,7 @@ export function SettingsPage() {
         ))}
         <Row label="Mejorar al terminar" hint="Genera las notas automáticamente cuando acaba la reunión."><Toggle checked={s.autoEnhance} onChange={(v) => void save({ autoEnhance: v })} /></Row>
         <Row label="Usar Claude con tu suscripción" hint="Vía Claude Code (claude -p). Sin coste por uso, algo más lento."><Toggle checked={s.claudeCliEnabled} onChange={(v) => void save({ claudeCliEnabled: v })} /></Row>
+        <Row label="Usar ChatGPT con tu suscripción" hint={<>Vía Codex CLI: instala con <code>npm i -g @openai/codex</code> e inicia sesión con <code>codex login</code>. Sin coste por uso; la respuesta llega entera al final.</>}><Toggle checked={!!s.codexCliEnabled} onChange={(v) => void save({ codexCliEnabled: v })} /></Row>
       </Card>
 
       <Card id="claves" title="Claves" desc="Pega la clave de tu propia cuenta. Queda en la base de datos de Acta, en este Mac, y no se comparte con nadie. Con Groq u OpenAI basta para transcribir y para las notas.">

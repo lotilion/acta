@@ -1,10 +1,13 @@
 // One streaming interface over several LLM providers. Model ids are "provider:model".
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { getSetting } from './db.ts';
 
 export type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string };
 
-export type ProviderId = 'openai' | 'groq' | 'anthropic' | 'claude-cli';
+export type ProviderId = 'openai' | 'groq' | 'anthropic' | 'claude-cli' | 'codex-cli';
 
 export const MODEL_CATALOG: { id: string; label: string; provider: ProviderId; speed: 'rápido' | 'equilibrado' | 'potente' }[] = [
   { id: 'openai:gpt-5.5', label: 'GPT-5.5', provider: 'openai', speed: 'potente' },
@@ -16,6 +19,7 @@ export const MODEL_CATALOG: { id: string; label: string; provider: ProviderId; s
   { id: 'anthropic:claude-sonnet-5-5', label: 'Claude Sonnet 5.5', provider: 'anthropic', speed: 'equilibrado' },
   { id: 'anthropic:claude-haiku-5-5', label: 'Claude Haiku 5.5', provider: 'anthropic', speed: 'rápido' },
   { id: 'claude-cli:sonnet', label: 'Claude (tu suscripción, vía Claude Code)', provider: 'claude-cli', speed: 'equilibrado' },
+  { id: 'codex-cli:default', label: 'ChatGPT (tu suscripción, vía Codex CLI)', provider: 'codex-cli', speed: 'equilibrado' },
   { id: 'groq:openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)', provider: 'groq', speed: 'rápido' },
   { id: 'groq:qwen/qwen3.8-27b', label: 'Qwen 3.8 27B (Groq)', provider: 'groq', speed: 'rápido' },
 ];
@@ -30,8 +34,12 @@ export function providerAvailable(p: ProviderId): boolean {
   if (p === 'groq') return !!apiKey('GROQ_API_KEY');
   if (p === 'anthropic') return !!apiKey('ANTHROPIC_API_KEY');
   if (p === 'claude-cli') return getSetting('claudeCliEnabled', false);
+  if (p === 'codex-cli') return getSetting('codexCliEnabled', false);
   return false;
 }
+
+/** Is any notes/chat provider usable (API key or an enabled subscription CLI)? */
+export const anyLlmAvailable = () => MODEL_CATALOG.some((m) => providerAvailable(m.provider));
 
 export function availableModels() {
   return MODEL_CATALOG.map((m) => ({ ...m, available: providerAvailable(m.provider) }));
@@ -41,9 +49,9 @@ export function defaultModel(kind: 'notes' | 'chat' | 'fast'): string {
   const chosen = getSetting<Record<string, string>>('models', {})[kind];
   if (chosen && providerAvailable(chosen.split(':')[0] as ProviderId)) return chosen;
   const prefs: Record<string, string[]> = {
-    notes: ['openai:gpt-5.5', 'anthropic:claude-sonnet-5-5', 'groq:openai/gpt-oss-120b', 'claude-cli:sonnet'],
-    chat: ['openai:gpt-5.4', 'anthropic:claude-sonnet-5-5', 'groq:openai/gpt-oss-120b', 'claude-cli:sonnet'],
-    fast: ['openai:gpt-5.4-mini', 'groq:openai/gpt-oss-120b', 'anthropic:claude-haiku-5-5', 'claude-cli:sonnet'],
+    notes: ['openai:gpt-5.5', 'anthropic:claude-sonnet-5-5', 'groq:openai/gpt-oss-120b', 'claude-cli:sonnet', 'codex-cli:default'],
+    chat: ['openai:gpt-5.4', 'anthropic:claude-sonnet-5-5', 'groq:openai/gpt-oss-120b', 'claude-cli:sonnet', 'codex-cli:default'],
+    fast: ['openai:gpt-5.4-mini', 'groq:openai/gpt-oss-120b', 'anthropic:claude-haiku-5-5', 'claude-cli:sonnet', 'codex-cli:default'],
   };
   for (const id of prefs[kind]) if (providerAvailable(id.split(':')[0] as ProviderId)) return id;
   return prefs[kind][0];
@@ -70,6 +78,8 @@ export async function* streamLLM(opts: {
     yield* streamOpenAICompatible(provider, name, opts);
   } else if (provider === 'anthropic') {
     yield* streamAnthropic(name, opts);
+  } else if (provider === 'codex-cli') {
+    yield* streamCodexCli(name, opts);
   } else {
     yield* streamClaudeCli(name, opts);
   }
@@ -158,6 +168,10 @@ async function* streamAnthropic(model: string, opts: Parameters<typeof streamLLM
   }
 }
 
+function cliMissing(cmd: string, install: string) {
+  return new LlmError(`No encuentro el comando «${cmd}». ${install}`);
+}
+
 async function* streamClaudeCli(model: string, opts: Parameters<typeof streamLLM>[0]) {
   const prompt = opts.messages.map((m) => `${m.role === 'user' ? 'Usuario' : 'Asistente'}: ${m.content}`).join('\n\n');
   const child = spawn(
@@ -165,6 +179,9 @@ async function* streamClaudeCli(model: string, opts: Parameters<typeof streamLLM
     ['-p', '--model', model, '--output-format', 'stream-json', '--include-partial-messages', '--verbose', '--system-prompt', opts.system, '--tools', ''],
     { stdio: ['pipe', 'pipe', 'pipe'], cwd: process.env.HOME },
   );
+  let spawnError: Error | null = null;
+  child.on('error', (e: any) => { spawnError = e?.code === 'ENOENT' ? cliMissing('claude', 'Instala Claude Code (npm i -g @anthropic-ai/claude-code) e inicia sesión con «claude».') : new LlmError(String(e?.message || e)); });
+  child.stdin.on('error', () => { /* the exit error says it all */ });
   opts.signal?.addEventListener('abort', () => child.kill());
   child.stdin.end(prompt);
   let buf = '';
@@ -185,5 +202,39 @@ async function* streamClaudeCli(model: string, opts: Parameters<typeof streamLLM
       }
     }
   }
+  if (spawnError) throw spawnError;
   if (errText && !buf) console.warn('[claude-cli]', errText.slice(0, 300));
+}
+
+// `codex exec` (OpenAI Codex CLI) signs in with the user's ChatGPT account, so Acta can use
+// that subscription with no API key. Its JSON stream changes between versions, so the stable
+// route is --output-last-message: no live streaming, the answer arrives whole at the end.
+async function* streamCodexCli(model: string, opts: Parameters<typeof streamLLM>[0]) {
+  const out = path.join(os.tmpdir(), `acta-codex-${process.pid}-${Math.random().toString(36).slice(2)}.txt`);
+  const args = ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--color', 'never', '--output-last-message', out];
+  if (model && model !== 'default') args.push('-m', model);
+  args.push('-'); // the prompt arrives on stdin
+  const child = spawn('codex', args, { stdio: ['pipe', 'ignore', 'pipe'], cwd: process.env.HOME });
+  opts.signal?.addEventListener('abort', () => child.kill());
+  let errText = '';
+  child.stderr.on('data', (d) => (errText += d));
+  child.stdin.on('error', () => { /* the exit error says it all */ });
+  const prompt = `${opts.system}\n\n${opts.messages.map((m) => `${m.role === 'user' ? 'Usuario' : 'Asistente'}: ${m.content}`).join('\n\n')}`;
+  const code = await new Promise<number>((resolve, reject) => {
+    child.on('error', (e: any) => reject(e?.code === 'ENOENT'
+      ? cliMissing('codex', 'Instala Codex CLI (npm i -g @openai/codex) e inicia sesión con «codex login».')
+      : new LlmError(String(e?.message || e))));
+    child.on('close', (c) => resolve(c ?? 1));
+    child.stdin.end(prompt);
+  });
+  try {
+    const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').trim() : '';
+    if (!text) {
+      const hint = /login|auth/i.test(errText) ? ' ¿Has iniciado sesión con «codex login»?' : '';
+      throw new LlmError(`Codex CLI no devolvió respuesta (código ${code}): ${errText.trim().split('\n').pop()?.slice(0, 300) || 'sin detalle'}.${hint}`);
+    }
+    yield text;
+  } finally {
+    fs.rmSync(out, { force: true });
+  }
 }

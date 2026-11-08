@@ -401,8 +401,8 @@ async function identifySpeakersAfterStop(meetingId: string) {
     if (!getSetting('identifySpeakers', true)) return;
     const them = get("SELECT COUNT(*) AS n FROM segments WHERE meeting_id = ? AND speaker = 'them'", meetingId)?.n || 0;
     if (them < 2) return;
-    const { providerAvailable } = await import('./llm.ts');
-    if (!['openai', 'groq', 'anthropic'].some((p) => providerAvailable(p as any))) return;
+    const { anyLlmAvailable } = await import('./llm.ts');
+    if (!anyLlmAvailable()) return;
     const { identifySpeakers } = await import('./ai.ts');
     const r = await identifySpeakers(meetingId);
     if (r.changed) bus.emit('event', { type: 'meeting.updated', meetingId });
