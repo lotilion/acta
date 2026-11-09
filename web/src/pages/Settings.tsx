@@ -238,6 +238,22 @@ export function SettingsPage() {
             <option value="sans">Moderna (sans serif)</option><option value="serif">Editorial (con serifa)</option>
           </Select>
         </Row>
+        <div className="px-5 py-3.5">
+          <div className="text-[13px] text-ink">Carpeta de marca (skill)</div>
+          <div className="mb-2 mt-0.5 text-[12px] text-ink-4">
+            Una carpeta de tu Mac con la guía de la marca (<code>SKILL.md</code> o <code>brand.md</code>: tono, reglas, terminología) y el logo (<code>logo.svg</code>/<code>.png</code>, también en <code>assets/</code>).
+            Acta la lee al generar: la guía manda sobre los colores de arriba y el logo se incrusta en diagramas, presentaciones y páginas.
+          </div>
+          <div className="flex gap-2">
+            <Input defaultValue={s.brand?.skillDir || ''} placeholder="~/teamlabs" onBlur={(e) => e.target.value !== (s.brand?.skillDir || '') && void save({ brand: { ...s.brand, skillDir: e.target.value.trim() } })} />
+            <Button variant="outline" onClick={async () => {
+              try {
+                const r = await api.get<any>(`/api/brand-skill?dir=${encodeURIComponent(s.brand?.skillDir || '')}`);
+                toast(r.ok ? `Encontrado: ${[r.guidelines && `guía (${r.guidelines})`, r.logo && `logo (${r.logo})`].filter(Boolean).join(' y ')}` : r.error, { tone: r.ok ? 'info' : 'error' });
+              } catch (e: any) { toast(e.message, { tone: 'error' }); }
+            }}>Comprobar</Button>
+          </div>
+        </div>
       </Card>
 
       <Card id="claves" title="Claves" desc="Pega la clave de tu propia cuenta. Queda en la base de datos de Acta, en este Mac, y no se comparte con nadie. Con Groq u OpenAI basta para transcribir y para las notas.">
