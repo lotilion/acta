@@ -1,7 +1,7 @@
 // Folder, Tasks, People, Companies, Archived and the global "Ask Acta" page.
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Folder as FolderIcon, MessageCircle, MoreHorizontal, Pencil, Trash2, Upload, Check, Users, Building2, Archive, RotateCcw, CheckSquare } from 'lucide-react';
+import { Folder as FolderIcon, MessageCircle, MoreHorizontal, Palette, Pencil, Trash2, Upload, Check, Users, Building2, Archive, RotateCcw, CheckSquare } from 'lucide-react';
 import { api, fmtShortDate, type MeetingSummary, type ActionItem, type Person } from '../api';
 import { useApp } from '../store';
 import { MeetingList } from '../components/MeetingList';
@@ -12,6 +12,66 @@ import { ImportDialog } from '../components/ImportDialog';
 
 const COLORS = ['olive', 'blue', 'purple', 'clay', 'rose', 'slate'];
 
+type BrandForm = { company: string; primary: string; accent: string; background: string; font: string };
+
+function FolderBrandModal({ folderId, folderName, current, onClose, onSaved }: {
+  folderId: string; folderName: string; current: Partial<BrandForm> | null; onClose: () => void; onSaved: () => void;
+}) {
+  const [form, setForm] = useState<BrandForm | null>(null);
+  useEffect(() => {
+    api.get<any>('/api/settings').then((s) => {
+      const g = s.brand || {};
+      setForm({
+        company: current?.company ?? folderName,
+        primary: current?.primary || g.primary || '#5b6f00',
+        accent: current?.accent || g.accent || '#788c15',
+        background: current?.background || g.background || '#fcfcf8',
+        font: current?.font || g.font || 'sans',
+      });
+    });
+  }, [folderId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = async (brand: BrandForm | null) => {
+    await api.put(`/api/folders/${folderId}`, { brand });
+    toast(brand ? `Marca guardada para «${folderName}». Se usará en sus diagramas, presentaciones y páginas.` : 'Esta carpeta vuelve a usar la marca global de Ajustes.');
+    onSaved();
+    onClose();
+  };
+  return (
+    <Modal open onClose={onClose} title={<span className="flex items-center gap-2"><Palette size={15} className="text-accent-ink" />Marca de este cliente</span>} width={440}>
+      {!form ? <div className="p-5"><div className="shimmer h-24 rounded-lg" /></div> : (
+        <div className="space-y-3 p-5">
+          <div className="text-[12.5px] text-ink-4">Los diagramas, presentaciones y páginas de las notas de esta carpeta usarán estos colores en vez de la marca global de Ajustes.</div>
+          <Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} placeholder="Nombre del cliente" />
+          <div className="space-y-2">
+            {([['primary', 'Color principal'], ['accent', 'Acento'], ['background', 'Fondo']] as const).map(([k, label]) => (
+              <div key={k} className="flex items-center justify-between">
+                <span className="text-[13px] text-ink">{label}</span>
+                <span className="flex items-center gap-2">
+                  <input type="color" value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} className="h-8 w-12 cursor-pointer rounded border border-hairline-strong bg-raised" />
+                  <code className="w-16 text-[12px] text-ink-4">{form[k]}</code>
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between">
+              <span className="text-[13px] text-ink">Tipografía</span>
+              <select value={form.font} onChange={(e) => setForm({ ...form, font: e.target.value })} className="h-8 rounded-lg border border-hairline-strong bg-raised px-2 text-[13px] text-ink outline-none">
+                <option value="sans">Moderna (sans serif)</option><option value="serif">Editorial (con serifa)</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-1">
+            {current ? <Button variant="ghost" onClick={() => void save(null)}>Usar la marca global</Button> : <span />}
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+              <Button variant="primary" onClick={() => void save(form)}>Guardar</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export function FolderPage() {
   const { id = '' } = useParams();
   const { folders, refreshFolders, newNote } = useApp();
@@ -20,6 +80,7 @@ export function FolderPage() {
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
   const [tab, setTab] = useState<'notes' | 'chat'>('notes');
   const [editing, setEditing] = useState(false);
+  const [branding, setBranding] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', color: 'olive' });
   const [importing, setImporting] = useState(false);
 
@@ -44,6 +105,7 @@ export function FolderPage() {
           <Button variant="primary" onClick={() => void newNote({ folderId: id })}>Nueva nota</Button>
           <Menu align="right" trigger={(o) => <Button variant="ghost" onClick={o}><MoreHorizontal size={16} /></Button>} items={[
             { label: 'Editar carpeta', icon: <Pencil size={14} />, onClick: () => setEditing(true) },
+            { label: 'Marca de este cliente', icon: <Palette size={14} />, hint: (folder as any).brand ? 'propia' : 'global', onClick: () => setBranding(true) },
             { label: 'Importar audio aquí', icon: <Upload size={14} />, onClick: () => setImporting(true) },
             'sep',
             { label: 'Eliminar carpeta', icon: <Trash2 size={14} />, danger: true, onClick: () => void remove() },
@@ -74,6 +136,7 @@ export function FolderPage() {
         </div>
       </Modal>
       <ImportDialog open={importing} onClose={() => setImporting(false)} folderId={id} />
+      {branding && <FolderBrandModal folderId={id} folderName={folder.name} current={(folder as any).brand || null} onClose={() => setBranding(false)} onSaved={() => void refreshFolders()} />}
     </div>
   );
 }

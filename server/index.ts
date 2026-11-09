@@ -21,7 +21,7 @@ import { anyLlmAvailable } from './llm.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { createMeeting, linkAttendees } from './meetings.ts';
 import { cliStatus } from './cli.ts';
-import { followupEmail, generateArtifact, generateDiagram, getBrand, saveDiagramHtml, writeIcs } from './followups.ts';
+import { followupEmail, generateArtifact, generateDiagram, getBrand, resolveBrand, saveDiagramHtml, writeIcs } from './followups.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
 const execFileP = promisify(execFile);
@@ -358,7 +358,8 @@ app.put('/api/recipes/:id', ah((req) => {
 }));
 app.delete('/api/recipes/:id', ah((req) => { run('DELETE FROM recipes WHERE id = ? AND builtin = 0', req.params.id); return { ok: true }; }));
 
-app.get('/api/folders', ah(() => all(`SELECT f.*, (SELECT COUNT(*) FROM meetings m WHERE m.folder_id = f.id AND m.archived_at IS NULL) AS count FROM folders f ORDER BY f.name`)));
+app.get('/api/folders', ah(() => all(`SELECT f.*, (SELECT COUNT(*) FROM meetings m WHERE m.folder_id = f.id AND m.archived_at IS NULL) AS count FROM folders f ORDER BY f.name`)
+  .map((f) => ({ ...f, brand: f.brand ? safeJson(f.brand, null) : null }))));
 app.post('/api/folders', ah((req) => {
   const id = uid('fd_');
   run('INSERT INTO folders(id, name, description, color, created_at) VALUES (?, ?, ?, ?, ?)', id, req.body.name || 'Nueva carpeta', req.body.description || '', req.body.color || 'olive', now());
@@ -366,7 +367,13 @@ app.post('/api/folders', ah((req) => {
   return { id };
 }));
 app.put('/api/folders/:id', ah((req) => {
-  run('UPDATE folders SET name = ?, description = ?, color = ? WHERE id = ?', req.body.name, req.body.description || '', req.body.color || 'olive', req.params.id);
+  const b = req.body || {};
+  if ('name' in b) run('UPDATE folders SET name = ?, description = ?, color = ? WHERE id = ?', b.name, b.description || '', b.color || 'olive', req.params.id);
+  // Per-client brand override; null (or all fields empty) goes back to the global brand.
+  if ('brand' in b) {
+    const hasAny = b.brand && Object.values(b.brand).some((v) => v);
+    run('UPDATE folders SET brand = ? WHERE id = ?', hasAny ? JSON.stringify(b.brand) : null, req.params.id);
+  }
   bus.emit('event', { type: 'meetings.changed' });
   return { ok: true };
 }));
@@ -522,7 +529,7 @@ app.post('/api/meetings/:id/event-ics', ah((req) => {
 
 app.post('/api/meetings/:id/artifact', ah(async (req) => {
   const kind = String(req.body?.kind);
-  if (kind === 'diagram') return { ...(await generateDiagram(req.params.id)), brand: getBrand() };
+  if (kind === 'diagram') return { ...(await generateDiagram(req.params.id)), brand: resolveBrand(req.params.id) };
   if (kind !== 'page' && kind !== 'slides') throw new Error('Tipo desconocido');
   const r = await generateArtifact(req.params.id, kind);
   openLocal(r.file);
@@ -531,7 +538,7 @@ app.post('/api/meetings/:id/artifact', ah(async (req) => {
 
 // The UI renders the Mermaid locally (bundled, offline) and sends back the SVG to save/open.
 app.post('/api/meetings/:id/artifact/diagram-html', ah((req) => {
-  const r = saveDiagramHtml({ title: String(req.body?.title || 'Diagrama'), svg: String(req.body?.svg || ''), mermaid: req.body?.mermaid });
+  const r = saveDiagramHtml(req.params.id, { title: String(req.body?.title || 'Diagrama'), svg: String(req.body?.svg || ''), mermaid: req.body?.mermaid });
   openLocal(r.file);
   return r;
 }));
