@@ -634,3 +634,12 @@ server.listen(PORT, '127.0.0.1', () => {
 
 process.on('SIGTERM', async () => { await stopRecording('shutdown'); process.exit(0); });
 process.on('SIGINT', async () => { await stopRecording('shutdown'); process.exit(0); });
+
+// A single-user local server must not die because one background task threw:
+// log the stack (it ends up in server.log) and keep serving.
+process.on('uncaughtException', (e) => {
+  console.error('[uncaught]', e?.stack || e);
+});
+process.on('unhandledRejection', (e: any) => {
+  console.error('[unhandled-rejection]', e?.stack || e);
+});

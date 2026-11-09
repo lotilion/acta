@@ -30,6 +30,7 @@ function findNode() {
 let win = null;
 let tray = null;
 let server = null;
+let restarts = 0;
 let quitting = false;
 let recording = null;
 const instance = crypto.randomBytes(8).toString('hex');
@@ -94,10 +95,26 @@ async function ensureServer() {
   }
 
   server = spawn(cmd, args, { cwd: root, env, stdio: ['ignore', logFile, logFile] });
-  server.on('exit', (code) => { server = null; if (!quitting && code) console.error('server exited', code); });
+  server.on('exit', (code) => {
+    server = null;
+    if (quitting) return;
+    console.error('server exited', code);
+    // The backend must outlive any crash: restart it so the window does not
+    // keep talking to a dead port ("Failed to fetch" everywhere).
+    restarts += 1;
+    if (restarts > 5) {
+      dialog.showErrorBox('Acta', `El servidor de Acta se ha caído varias veces. Revisa ${logPath} y vuelve a abrir la app.`);
+      return;
+    }
+    setTimeout(() => { if (!quitting && !server) void ensureServer(); }, 1000 * restarts);
+  });
   for (let i = 0; i < 120; i++) {
     const health = await probe();
-    if (health && health.app === 'acta' && health.instance === instance) return true;
+    if (health && health.app === 'acta' && health.instance === instance) {
+      // A restart only counts as recovered if the server stays up a while.
+      setTimeout(() => { if (server) restarts = 0; }, 60_000);
+      return true;
+    }
     if (!server) break;
     await new Promise((r) => setTimeout(r, 250));
   }
