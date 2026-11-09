@@ -20,6 +20,7 @@ import { enhanceMeeting, extractActionItems, chat, brief, identifySpeakers } fro
 import { anyLlmAvailable } from './llm.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { createMeeting, linkAttendees } from './meetings.ts';
+import { cliStatus } from './cli.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
 const execFileP = promisify(execFile);
@@ -137,6 +138,9 @@ app.get('/api/settings', ah(() => {
     mcpCommand: mcpCommand(),
   };
 }));
+
+// Whether the subscription CLIs (Claude Code, Codex) are installed and signed in.
+app.get('/api/cli/status', ah(async (req) => cliStatus(req.query.refresh === '1')));
 
 app.put('/api/settings', ah((req) => {
   const b = req.body || {};

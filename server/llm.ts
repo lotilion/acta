@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { getSetting } from './db.ts';
+import { findCli } from './cli.ts';
 
 export type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -175,7 +176,7 @@ function cliMissing(cmd: string, install: string) {
 async function* streamClaudeCli(model: string, opts: Parameters<typeof streamLLM>[0]) {
   const prompt = opts.messages.map((m) => `${m.role === 'user' ? 'Usuario' : 'Asistente'}: ${m.content}`).join('\n\n');
   const child = spawn(
-    'claude',
+    findCli('claude') || 'claude',
     ['-p', '--model', model, '--output-format', 'stream-json', '--include-partial-messages', '--verbose', '--system-prompt', opts.system, '--tools', ''],
     { stdio: ['pipe', 'pipe', 'pipe'], cwd: process.env.HOME },
   );
@@ -214,7 +215,7 @@ async function* streamCodexCli(model: string, opts: Parameters<typeof streamLLM>
   const args = ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--color', 'never', '--output-last-message', out];
   if (model && model !== 'default') args.push('-m', model);
   args.push('-'); // the prompt arrives on stdin
-  const child = spawn('codex', args, { stdio: ['pipe', 'ignore', 'pipe'], cwd: process.env.HOME });
+  const child = spawn(findCli('codex') || 'codex', args, { stdio: ['pipe', 'ignore', 'pipe'], cwd: process.env.HOME });
   opts.signal?.addEventListener('abort', () => child.kill());
   let errText = '';
   child.stderr.on('data', (d) => (errText += d));

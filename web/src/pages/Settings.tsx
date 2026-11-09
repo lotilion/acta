@@ -29,6 +29,58 @@ const Select = (p: React.SelectHTMLAttributes<HTMLSelectElement>) => (
   <select {...p} className={cx('h-8 max-w-[300px] rounded-lg border border-hairline-strong bg-raised px-2 text-[13px] text-ink outline-none', p.className)} />
 );
 
+type CliStatus = { installed: boolean; path: string; version: string; loggedIn: boolean | null };
+
+function CliRow({ label, hint, cli, install, login, loginLabel, checked, onToggle, onRecheck }: {
+  label: string; hint: string; cli?: CliStatus; install: string; login: string; loginLabel: string;
+  checked: boolean; onToggle: (v: boolean) => void; onRecheck: () => Promise<void>;
+}) {
+  const [checking, setChecking] = useState(false);
+  const recheck = async () => { setChecking(true); try { await onRecheck(); } finally { setChecking(false); } };
+  const copy = (cmd: string) => void navigator.clipboard.writeText(cmd).then(() => toast('Comando copiado. Pégalo en la Terminal.'));
+  let status: ReactNode = null;
+  if (cli) {
+    if (!cli.installed) {
+      status = (
+        <span>
+          No encuentro el comando. Abre la app <b>Terminal</b>, pega <code className="text-[11.5px]">{install}</code>, pulsa Intro y después {loginLabel}.{' '}
+          <button className="underline underline-offset-2 hover:text-ink" onClick={() => copy(install)}>Copiar comando</button>
+        </span>
+      );
+    } else if (cli.loggedIn === false) {
+      status = (
+        <span>
+          <span className="text-accent-ink">✓ Instalado{cli.version ? ` (${cli.version})` : ''}.</span> Falta iniciar sesión: {loginLabel}.{' '}
+          <button className="underline underline-offset-2 hover:text-ink" onClick={() => copy(login)}>Copiar comando</button>
+        </span>
+      );
+    } else if (cli.loggedIn === null) {
+      status = <span><span className="text-accent-ink">✓ Instalado{cli.version ? ` (${cli.version})` : ''}.</span> Si al usarlo da error de sesión, {loginLabel}.</span>;
+    } else {
+      status = <span className="text-accent-ink">✓ Instalado{cli.version ? ` (${cli.version})` : ''} y con la sesión iniciada. Listo.</span>;
+    }
+  }
+  return (
+    <div className="px-5 py-3.5">
+      <div className="flex items-center gap-6">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] text-ink">{label}</div>
+          <div className="mt-0.5 text-[12px] text-ink-4">{hint}</div>
+        </div>
+        <Toggle checked={checked} onChange={onToggle} />
+      </div>
+      {(checked || (cli && !cli.installed)) && status && (
+        <div className="mt-2 flex items-start justify-between gap-3 rounded-lg bg-sunken px-3 py-2 text-[12px] text-ink-3">
+          <div>{status}</div>
+          <button className="shrink-0 text-ink-4 underline-offset-2 hover:text-ink hover:underline" onClick={() => void recheck()} disabled={checking}>
+            {checking ? 'Comprobando…' : 'Comprobar de nuevo'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const KEY_DEFS = [
   { id: 'GROQ_API_KEY', label: 'Groq', hint: 'Transcripción y notas. El plan gratuito suele bastar para empezar.', href: 'https://console.groq.com/keys', link: 'Crear clave' },
   { id: 'OPENAI_API_KEY', label: 'OpenAI', hint: 'Transcripción y notas.', href: 'https://platform.openai.com/api-keys', link: 'Crear clave' },
@@ -43,13 +95,16 @@ export function SettingsPage() {
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [perm, setPerm] = useState<any>(null);
   const [devices, setDevices] = useState<any[]>([]);
+  const [cli, setCli] = useState<{ claude: any; codex: any } | null>(null);
   const [newCal, setNewCal] = useState({ name: '', url: '' });
 
   const load = async () => {
     setS(await api.get('/api/settings'));
     api.get('/api/helper/permissions').then(setPerm).catch(() => setPerm(null));
     api.get<any[]>('/api/helper/devices').then(setDevices).catch(() => {});
+    api.get<any>('/api/cli/status').then(setCli).catch(() => {});
   };
+  const recheckCli = async () => setCli(await api.get<any>('/api/cli/status?refresh=1'));
   useEffect(() => { void load(); }, []);
   useEffect(() => {
     if (s && loc.hash) setTimeout(() => document.getElementById(loc.hash.slice(1))?.scrollIntoView({ behavior: 'smooth' }), 50);
@@ -137,8 +192,28 @@ export function SettingsPage() {
           </Row>
         ))}
         <Row label="Mejorar al terminar" hint="Genera las notas automáticamente cuando acaba la reunión."><Toggle checked={s.autoEnhance} onChange={(v) => void save({ autoEnhance: v })} /></Row>
-        <Row label="Usar Claude con tu suscripción" hint="Vía Claude Code (claude -p). Sin coste por uso, algo más lento."><Toggle checked={s.claudeCliEnabled} onChange={(v) => void save({ claudeCliEnabled: v })} /></Row>
-        <Row label="Usar ChatGPT con tu suscripción" hint={<>Vía Codex CLI: instala con <code>npm i -g @openai/codex</code> e inicia sesión con <code>codex login</code>. Sin coste por uso; la respuesta llega entera al final.</>}><Toggle checked={!!s.codexCliEnabled} onChange={(v) => void save({ codexCliEnabled: v })} /></Row>
+        <CliRow
+          label="Usar Claude con tu suscripción"
+          hint="Vía Claude Code. Sin coste por uso, algo más lento."
+          cli={cli?.claude}
+          install="npm install -g @anthropic-ai/claude-code"
+          login="claude"
+          loginLabel="abre Terminal, ejecuta «claude» e inicia sesión cuando lo pida"
+          checked={!!s.claudeCliEnabled}
+          onToggle={(v) => void save({ claudeCliEnabled: v })}
+          onRecheck={recheckCli}
+        />
+        <CliRow
+          label="Usar ChatGPT con tu suscripción"
+          hint="Vía Codex CLI. Sin coste por uso; la respuesta llega entera al final."
+          cli={cli?.codex}
+          install="npm install -g @openai/codex"
+          login="codex login"
+          loginLabel="abre Terminal y ejecuta «codex login»"
+          checked={!!s.codexCliEnabled}
+          onToggle={(v) => void save({ codexCliEnabled: v })}
+          onRecheck={recheckCli}
+        />
       </Card>
 
       <Card id="claves" title="Claves" desc="Pega la clave de tu propia cuenta. Queda en la base de datos de Acta, en este Mac, y no se comparte con nadie. Con Groq u OpenAI basta para transcribir y para las notas.">
@@ -220,7 +295,8 @@ export function SettingsPage() {
               : <>El capturador nativo no está compilado. Ejecuta <code>npm run build:native</code>.</>}
           </div>
         ) : (
-          (['mic', 'screen', 'calendar'] as const).map((k) => (
+          <>
+          {(['mic', 'screen', 'calendar'] as const).map((k) => (
             <Row key={k} label={{ mic: 'Micrófono', screen: 'Grabación de pantalla (audio del sistema)', calendar: 'Calendario' }[k]}
               hint={perm[k] === 'granted' ? <span className="inline-flex items-center gap-1 text-accent-ink"><ShieldCheck size={12} />Concedido</span> : 'No concedido'}>
               {perm[k] !== 'granted' && (
@@ -230,7 +306,13 @@ export function SettingsPage() {
                 </div>
               )}
             </Row>
-          ))
+          ))}
+          <div className="px-5 py-3 text-[12px] leading-relaxed text-ink-4">
+            ¿macOS te vuelve a pedir el permiso de pantalla aunque ya esté concedido? Pasa cuando esta copia de Acta no está firmada
+            con un certificado de desarrollador de Apple: el sistema no puede fijar el permiso a la app y lo re-confirma, sobre todo
+            tras actualizarla. Acepta el aviso y la grabación continúa; la solución definitiva es una build firmada (Developer ID).
+          </div>
+          </>
         )}
       </Card>
 
