@@ -7,6 +7,9 @@ import { EventEmitter } from 'node:events';
 import { AUDIO_DIR, HELPER_BIN } from './env.ts';
 import { all, get, getSetting, now, reindexMeeting, run } from './db.ts';
 import { SAMPLE_RATE, transcribe, type SttProvider } from './transcribe.ts';
+import { findCli } from './cli.ts';
+
+const FFMPEG_MISSING = 'Para esto hace falta ffmpeg. Instálalo con «brew install ffmpeg» (Mac) y vuelve a intentarlo.';
 
 export const bus = new EventEmitter();
 bus.setMaxListeners(50);
@@ -316,7 +319,13 @@ function startHelperSource(session: RecordingSession, opts: { mic: boolean; syst
 
 export function startFileSource(session: RecordingSession, file: string, channel: Channel, realtime: boolean, onEnd?: () => void): Source {
   const args = [...(realtime ? ['-re'] : []), '-hide_banner', '-loglevel', 'error', '-i', file, '-f', 's16le', '-ac', '1', '-ar', String(SAMPLE_RATE), '-'];
-  const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(findCli('ffmpeg') || 'ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  child.on('error', (e: any) => {
+    const msg = e?.code === 'ENOENT' ? FFMPEG_MISSING : String(e?.message || e);
+    session.errors.push(msg);
+    bus.emit('event', { type: 'recording.error', meetingId: session.meetingId, message: msg });
+    onEnd?.();
+  });
   let samplesSoFar = 0;
   let rest: Buffer = Buffer.alloc(0);
   child.stdout.on('data', (d: Buffer) => {
@@ -417,11 +426,22 @@ function setStatus(meetingId: string, status: string) {
 }
 
 async function mixAudio(meetingId: string, raws: string[]) {
+  const bin = findCli('ffmpeg');
+  if (!bin) {
+    // Keep the raw PCM so nothing is lost; saving the .m4a just needs ffmpeg installed.
+    console.warn('[audio] ffmpeg no está instalado: no se genera el .m4a de', meetingId);
+    bus.emit('event', { type: 'recording.error', meetingId, message: `No se pudo guardar el audio como .m4a: ${FFMPEG_MISSING}` });
+    return;
+  }
   const out = path.join(AUDIO_DIR, `${meetingId}.m4a`);
   const args = ['-y', '-loglevel', 'error'];
   for (const r of raws) args.push('-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', '1', '-i', r);
   args.push('-filter_complex', 'amix=inputs=2:duration=longest', '-c:a', 'aac', '-b:a', '64k', out);
-  await new Promise<void>((resolve) => spawn('ffmpeg', args).on('exit', () => resolve()));
+  await new Promise<void>((resolve) => {
+    const child = spawn(bin, args);
+    child.on('error', (e: any) => { console.warn('[audio]', e?.message || e); resolve(); });
+    child.on('exit', () => resolve());
+  });
   if (fs.existsSync(out)) {
     run('UPDATE meetings SET audio_path = ? WHERE id = ?', out, meetingId);
     for (const r of raws) fs.rmSync(r, { force: true }); // intermediate raw PCM, regenerable

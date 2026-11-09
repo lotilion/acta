@@ -31,19 +31,21 @@ function candidateDirs(): string[] {
 
 const found = new Map<string, string>();
 
-/** Absolute path of a CLI, or '' if it is not installed. Cached per run; refresh() clears it. */
-export function findCli(cmd: 'claude' | 'codex'): string {
+/** Absolute path of a CLI (claude, codex, ffmpeg…), or '' if not installed. Cached; refresh() clears it. */
+export function findCli(cmd: string): string {
   const hit = found.get(cmd);
   if (hit !== undefined && (hit === '' || fs.existsSync(hit))) return hit;
   let result = '';
-  const exe = process.platform === 'win32' ? `${cmd}.cmd` : cmd;
-  for (const dir of candidateDirs()) {
-    const p = path.join(dir, exe);
-    try {
-      fs.accessSync(p, fs.constants.X_OK);
-      result = p;
-      break;
-    } catch { /* keep looking */ }
+  const names = process.platform === 'win32' ? [`${cmd}.exe`, `${cmd}.cmd`, cmd] : [cmd];
+  outer: for (const dir of candidateDirs()) {
+    for (const exe of names) {
+      const p = path.join(dir, exe);
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        result = p;
+        break outer;
+      } catch { /* keep looking */ }
+    }
   }
   found.set(cmd, result);
   return result;
