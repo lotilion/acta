@@ -221,7 +221,7 @@ export function SettingsPage() {
         />
       </Card>
 
-      <Card id="marca" title="Marca" desc="Identidad visual de lo que Acta genera: diagramas, presentaciones y páginas. Ponle los colores de tu empresa o del cliente.">
+      <Card id="marca" title="Marca" desc="Identidad visual de lo que Acta genera: diagramas, presentaciones y páginas. Esta es la marca por defecto; cada carpeta puede tener la suya (en la carpeta: ··· → Marca de este cliente).">
         <Row label="Nombre (empresa o cliente)" hint="Aparece como firma discreta en lo generado.">
           <Input className="w-56" defaultValue={s.brand?.company || ''} onBlur={(e) => void save({ brand: { ...s.brand, company: e.target.value } })} placeholder="TeamLabs" />
         </Row>

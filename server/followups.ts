@@ -19,6 +19,21 @@ export function getBrand(): Brand {
   };
 }
 
+/** The brand for one note: its folder's client brand when set, the global one otherwise. */
+export function resolveBrand(meetingId?: string): Brand {
+  const base = getBrand();
+  if (!meetingId) return base;
+  const row = get('SELECT f.brand FROM meetings m JOIN folders f ON f.id = m.folder_id WHERE m.id = ?', meetingId);
+  if (!row?.brand) return base;
+  try {
+    const o = JSON.parse(row.brand);
+    const set = Object.fromEntries(Object.entries(o).filter(([, v]) => v));
+    return { ...base, ...set } as Brand;
+  } catch {
+    return base;
+  }
+}
+
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '\n[…recortado…]' : s);
 const slug = (s: string) => s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).toLowerCase() || 'reunion';
 
@@ -113,9 +128,9 @@ export async function generateDiagram(meetingId: string) {
 }
 
 /** Saves the already-rendered diagram (inline SVG, no external dependencies) plus the .svg itself. */
-export function saveDiagramHtml(opts: { title: string; svg: string; mermaid?: string }) {
+export function saveDiagramHtml(meetingId: string | undefined, opts: { title: string; svg: string; mermaid?: string }) {
   if (!opts.svg?.trim().startsWith('<svg')) throw new Error('Falta el SVG del diagrama');
-  const b = getBrand();
+  const b = resolveBrand(meetingId);
   const esc = (s: string) => s.replace(/</g, '&lt;');
   const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(opts.title)}</title>
 <style>body{margin:0;background:${b.background};color:${b.text};font:15px/1.5 ${b.font === 'serif' ? 'Georgia,serif' : '-apple-system,BlinkMacSystemFont,sans-serif'};display:flex;flex-direction:column;align-items:center;padding:28px 16px}
@@ -133,7 +148,7 @@ ${opts.mermaid ? `<!-- mermaid:\n${opts.mermaid.replace(/--/g, '—')}\n-->` : '
 export async function generateArtifact(meetingId: string, kind: 'page' | 'slides') {
   const { m, context } = meetingContext(meetingId, 60_000);
   const title = m.title || 'Reunión';
-  const raw = await completeLLM({ kind: 'notes', system: htmlArtifactSystem(kind, getSetting('userName', ''), getBrand()), messages: [{ role: 'user', content: clip(context, 100_000) }], maxTokens: 8000 });
+  const raw = await completeLLM({ kind: 'notes', system: htmlArtifactSystem(kind, getSetting('userName', ''), resolveBrand(meetingId)), messages: [{ role: 'user', content: clip(context, 100_000) }], maxTokens: 8000 });
   const match = raw.match(/<!doctype[\s\S]*<\/html>/i) || raw.match(/<html[\s\S]*<\/html>/i);
   if (!match) throw new Error('El modelo no devolvió una página completa. Prueba otra vez o con otro modelo.');
   const file = path.join(EXPORT_DIR, `${kind === 'slides' ? 'presentacion' : 'pagina'}-${slug(title)}-${Date.now()}.html`);
