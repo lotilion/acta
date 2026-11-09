@@ -12,7 +12,7 @@ import { ImportDialog } from '../components/ImportDialog';
 
 const COLORS = ['olive', 'blue', 'purple', 'clay', 'rose', 'slate'];
 
-type BrandForm = { company: string; primary: string; accent: string; background: string; font: string };
+type BrandForm = { company: string; primary: string; accent: string; background: string; font: string; skillDir: string };
 
 function FolderBrandModal({ folderId, folderName, current, onClose, onSaved }: {
   folderId: string; folderName: string; current: Partial<BrandForm> | null; onClose: () => void; onSaved: () => void;
@@ -27,6 +27,7 @@ function FolderBrandModal({ folderId, folderName, current, onClose, onSaved }: {
         accent: current?.accent || g.accent || '#788c15',
         background: current?.background || g.background || '#fcfcf8',
         font: current?.font || g.font || 'sans',
+        skillDir: current?.skillDir || '',
       });
     });
   }, [folderId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -57,6 +58,18 @@ function FolderBrandModal({ folderId, folderName, current, onClose, onSaved }: {
               <select value={form.font} onChange={(e) => setForm({ ...form, font: e.target.value })} className="h-8 rounded-lg border border-hairline-strong bg-raised px-2 text-[13px] text-ink outline-none">
                 <option value="sans">Moderna (sans serif)</option><option value="serif">Editorial (con serifa)</option>
               </select>
+            </div>
+          </div>
+          <div>
+            <div className="mb-1 text-[12px] text-ink-4">Carpeta de marca (skill) del cliente: guía <code>SKILL.md</code>/<code>brand.md</code> + <code>logo.svg/.png</code>. Opcional.</div>
+            <div className="flex gap-2">
+              <Input value={form.skillDir} onChange={(e) => setForm({ ...form, skillDir: e.target.value })} placeholder="~/teamlabs" />
+              <Button variant="outline" onClick={async () => {
+                try {
+                  const r = await api.get<any>(`/api/brand-skill?dir=${encodeURIComponent(form.skillDir)}`);
+                  toast(r.ok ? `Encontrado: ${[r.guidelines && `guía (${r.guidelines})`, r.logo && `logo (${r.logo})`].filter(Boolean).join(' y ')}` : r.error, { tone: r.ok ? 'info' : 'error' });
+                } catch (e: any) { toast(e.message, { tone: 'error' }); }
+              }}>Comprobar</Button>
             </div>
           </div>
           <div className="flex items-center justify-between pt-1">

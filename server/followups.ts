@@ -16,7 +16,47 @@ export function getBrand(): Brand {
     background: b.background || '#fcfcf8',
     text: b.text || '#292929',
     font: b.font === 'serif' ? 'serif' : 'sans',
+    skillDir: b.skillDir || '',
   };
+}
+
+// ---------- brand skill: a local folder with the client's guidelines and logo ----------
+export type BrandSkill = { dir: string; guidelines: string; logo: { name: string; dataUri: string } | null };
+
+const expandHome = (p: string) => p.replace(/^~(?=\/|$)/, process.env.HOME || '');
+
+/** Reads a brand folder: SKILL.md/brand.md as guidelines, logo.* (or assets/) as the logo. */
+export function loadBrandSkill(dirRaw?: string): BrandSkill | null {
+  const dir = (dirRaw || '').trim() && expandHome(String(dirRaw).trim());
+  if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;
+  let guidelines = '';
+  for (const name of ['SKILL.md', 'skill.md', 'BRAND.md', 'brand.md', 'MARCA.md', 'marca.md', 'README.md', 'readme.md']) {
+    const p = path.join(dir, name);
+    if (fs.existsSync(p)) {
+      guidelines = fs.readFileSync(p, 'utf8').slice(0, 8000);
+      break;
+    }
+  }
+  let logo: BrandSkill['logo'] = null;
+  const candidates: string[] = [];
+  for (const sub of ['', 'assets', 'img', 'images', 'logos']) {
+    const d = path.join(dir, sub);
+    try {
+      for (const f of fs.readdirSync(d)) if (/\.(svg|png)$/i.test(f)) candidates.push(path.join(d, f));
+    } catch { /* no such subfolder */ }
+  }
+  candidates.sort((a, b) => Number(!/logo/i.test(path.basename(a))) - Number(!/logo/i.test(path.basename(b))));
+  for (const f of candidates) {
+    try {
+      const buf = fs.readFileSync(f);
+      if (buf.length > 400_000) continue; // a data URI this big would bloat every document
+      const mime = /\.svg$/i.test(f) ? 'image/svg+xml' : 'image/png';
+      logo = { name: path.basename(f), dataUri: `data:${mime};base64,${buf.toString('base64')}` };
+      break;
+    } catch { /* unreadable: try the next one */ }
+  }
+  if (!guidelines && !logo) return null;
+  return { dir, guidelines, logo };
 }
 
 /** The brand for one note: its folder's client brand when set, the global one otherwise. */
@@ -121,7 +161,9 @@ export type ArtifactKind = 'diagram' | 'page' | 'slides';
 /** Diagram: returns the Mermaid code; the UI renders it locally (no CDN) and can export it. */
 export async function generateDiagram(meetingId: string) {
   const { m, context } = meetingContext(meetingId, 40_000);
-  const raw = await completeLLM({ kind: 'notes', system: DIAGRAM_SYSTEM, messages: [{ role: 'user', content: clip(context, 80_000) }], maxTokens: 1800 });
+  const skill = loadBrandSkill(resolveBrand(meetingId).skillDir);
+  const system = DIAGRAM_SYSTEM + (skill?.guidelines ? `\n\nGUÍA DE MARCA DEL CLIENTE (respeta su terminología y tono en las etiquetas):\n${skill.guidelines.slice(0, 2500)}` : '');
+  const raw = await completeLLM({ kind: 'notes', system, messages: [{ role: 'user', content: clip(context, 80_000) }], maxTokens: 1800 });
   const code = raw.replace(/^```(?:mermaid)?\s*/i, '').replace(/```\s*$/, '').trim();
   if (!code) throw new Error('El modelo no devolvió un diagrama. Prueba otra vez o con otro modelo.');
   return { title: m.title || 'Reunión', mermaid: code };
@@ -131,11 +173,12 @@ export async function generateDiagram(meetingId: string) {
 export function saveDiagramHtml(meetingId: string | undefined, opts: { title: string; svg: string; mermaid?: string }) {
   if (!opts.svg?.trim().startsWith('<svg')) throw new Error('Falta el SVG del diagrama');
   const b = resolveBrand(meetingId);
+  const logo = loadBrandSkill(b.skillDir)?.logo;
   const esc = (s: string) => s.replace(/</g, '&lt;');
   const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(opts.title)}</title>
 <style>body{margin:0;background:${b.background};color:${b.text};font:15px/1.5 ${b.font === 'serif' ? 'Georgia,serif' : '-apple-system,BlinkMacSystemFont,sans-serif'};display:flex;flex-direction:column;align-items:center;padding:28px 16px}
-h1{font-size:22px;margin:0 0 4px;color:${b.primary}}.c{font-size:12px;color:${b.accent};margin:0 0 18px}.d{max-width:1200px;width:100%;overflow:auto;display:flex;justify-content:center}svg{max-width:100%;height:auto}</style></head>
-<body><h1>${esc(opts.title)}</h1>${b.company ? `<p class="c">${esc(b.company)}</p>` : ''}<div class="d">${opts.svg}</div>
+h1{font-size:22px;margin:0 0 4px;color:${b.primary}}.c{font-size:12px;color:${b.accent};margin:0 0 18px}.d{max-width:1200px;width:100%;overflow:auto;display:flex;justify-content:center}svg{max-width:100%;height:auto}.l{height:30px;margin-bottom:10px}</style></head>
+<body>${logo ? `<img class="l" src="${logo.dataUri}" alt="logo">` : ''}<h1>${esc(opts.title)}</h1>${b.company ? `<p class="c">${esc(b.company)}</p>` : ''}<div class="d">${opts.svg}</div>
 ${opts.mermaid ? `<!-- mermaid:\n${opts.mermaid.replace(/--/g, '—')}\n-->` : ''}</body></html>`;
   const base = `diagrama-${slug(opts.title)}-${Date.now()}`;
   const file = path.join(EXPORT_DIR, `${base}.html`);
@@ -148,10 +191,19 @@ ${opts.mermaid ? `<!-- mermaid:\n${opts.mermaid.replace(/--/g, '—')}\n-->` : '
 export async function generateArtifact(meetingId: string, kind: 'page' | 'slides') {
   const { m, context } = meetingContext(meetingId, 60_000);
   const title = m.title || 'Reunión';
-  const raw = await completeLLM({ kind: 'notes', system: htmlArtifactSystem(kind, getSetting('userName', ''), resolveBrand(meetingId)), messages: [{ role: 'user', content: clip(context, 100_000) }], maxTokens: 8000 });
+  const brand = resolveBrand(meetingId);
+  const skill = loadBrandSkill(brand.skillDir);
+  const raw = await completeLLM({
+    kind: 'notes',
+    system: htmlArtifactSystem(kind, getSetting('userName', ''), brand, skill ? { guidelines: skill.guidelines, hasLogo: !!skill.logo } : undefined),
+    messages: [{ role: 'user', content: clip(context, 100_000) }],
+    maxTokens: 8000,
+  });
   const match = raw.match(/<!doctype[\s\S]*<\/html>/i) || raw.match(/<html[\s\S]*<\/html>/i);
   if (!match) throw new Error('El modelo no devolvió una página completa. Prueba otra vez o con otro modelo.');
+  let html = match[0];
+  if (skill?.logo) html = html.split('{{LOGO}}').join(skill.logo.dataUri);
   const file = path.join(EXPORT_DIR, `${kind === 'slides' ? 'presentacion' : 'pagina'}-${slug(title)}-${Date.now()}.html`);
-  fs.writeFileSync(file, match[0]);
+  fs.writeFileSync(file, html);
   return { file };
 }

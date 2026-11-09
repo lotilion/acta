@@ -21,7 +21,7 @@ import { anyLlmAvailable } from './llm.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { createMeeting, linkAttendees } from './meetings.ts';
 import { cliStatus } from './cli.ts';
-import { followupEmail, generateArtifact, generateDiagram, getBrand, resolveBrand, saveDiagramHtml, writeIcs } from './followups.ts';
+import { followupEmail, generateArtifact, generateDiagram, getBrand, loadBrandSkill, resolveBrand, saveDiagramHtml, writeIcs } from './followups.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
 const execFileP = promisify(execFile);
@@ -534,6 +534,15 @@ app.post('/api/meetings/:id/artifact', ah(async (req) => {
   const r = await generateArtifact(req.params.id, kind);
   openLocal(r.file);
   return r;
+}));
+
+// Probe a brand-skill folder: what guidelines and logo Acta would use from it.
+app.get('/api/brand-skill', ah((req) => {
+  const dir = String(req.query.dir || '');
+  if (!dir.trim()) return { ok: false, error: 'Escribe la ruta de la carpeta' };
+  const s = loadBrandSkill(dir);
+  if (!s) return { ok: false, error: 'No encuentro ahí ni una guía (SKILL.md, brand.md…) ni un logo (.svg/.png)' };
+  return { ok: true, guidelines: s.guidelines ? `${s.guidelines.length} caracteres` : null, logo: s.logo?.name || null };
 }));
 
 // The UI renders the Mermaid locally (bundled, offline) and sends back the SVG to save/open.
