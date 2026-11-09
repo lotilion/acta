@@ -13,6 +13,10 @@ const slug = (s: string) => s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').
 function meetingContext(meetingId: string, transcriptBudget = 60_000) {
   const m = parseMeeting(get('SELECT * FROM meetings WHERE id = ?', meetingId));
   if (!m) throw new Error('Nota no encontrada');
+  const hasTranscript = !!get('SELECT 1 FROM segments WHERE meeting_id = ? LIMIT 1', meetingId);
+  if (!hasTranscript && !(m.enhanced_md || '').trim() && !(m.notes_text || '').trim()) {
+    throw new Error('La nota está vacía: graba la reunión o escribe algo antes de generar esto.');
+  }
   const me = getSetting('userName', '') || 'Yo';
   const date = new Date(m.started_at || m.created_at).toLocaleString('es-ES', { dateStyle: 'full', timeStyle: 'short' });
   const context = `REUNIÓN: ${m.title || 'Sin título'}\nFECHA: ${date}\nASISTENTES: ${(m.attendees || []).map((a: any) => a.name || a.email).filter(Boolean).join(', ') || 'desconocidos'}\n\nNOTAS:\n${m.enhanced_md || m.notes_text || '(sin notas)'}\n\nTRANSCRIPT:\n${clip(transcriptText(meetingId, { me, them: 'Ellos' }), transcriptBudget)}`;
