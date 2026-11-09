@@ -12,6 +12,7 @@ import { ChatPanel, useRecipes } from '../components/ChatPanel';
 import { Markdown } from '../components/Markdown';
 import { Button, Chip, IconButton, Input, Menu, Modal, cx, toast, type MenuItem } from '../components/ui';
 import { folderColor } from '../components/Sidebar';
+import { EmailModal, EventModal, NextSteps } from '../components/NextSteps';
 import { BriefModal } from './Home';
 
 function Waveform({ level, active }: { level: number; active: boolean }) {
@@ -65,7 +66,7 @@ function AttendeesModal({ open, onClose, attendees, onSave }: { open: boolean; o
   );
 }
 
-function ActionItems({ meeting, reload }: { meeting: Meeting; reload: () => void }) {
+function ActionItems({ meeting, reload, onSchedule }: { meeting: Meeting; reload: () => void; onSchedule: (task: { text: string; owner?: string; due?: string }) => void }) {
   const [text, setText] = useState('');
   const [extracting, setExtracting] = useState(false);
   const items = meeting.actionItems;
@@ -94,6 +95,7 @@ function ActionItems({ meeting, reload }: { meeting: Meeting; reload: () => void
               {a.text}
               {(a.owner || a.due) && <span className="ml-2 text-[12px] text-ink-4">{[a.owner, a.due].filter(Boolean).join(' · ')}</span>}
             </div>
+            <button onClick={() => onSchedule(a)} className="opacity-0 group-hover:opacity-100 text-ink-4 hover:text-ink" title="Convertir en cita de calendario"><CalendarDays size={13} /></button>
             <button onClick={() => void remove(a.id)} className="opacity-0 group-hover:opacity-100 text-ink-4 hover:text-danger" title="Quitar"><Trash2 size={13} /></button>
           </div>
         ))}
@@ -122,6 +124,8 @@ export function Note() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [attOpen, setAttOpen] = useState(false);
   const [briefOpen, setBriefOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [eventFor, setEventFor] = useState<{ title?: string; description?: string } | null>(null);
   const [ask, setAsk] = useState('');
   const [askFocus, setAskFocus] = useState(false);
   const [settings, setSettings] = useState<any>(null);
@@ -334,10 +338,13 @@ export function Note() {
               {view === 'enhanced' && !enhancing && m.enhanced_md && (
                 <>
                   <EnhancedEditor key={`enh-${id}-${m.enhanced_at}`} markdown={m.enhanced_md} onChange={(md) => void api.patch(`/api/meetings/${id}`, { enhanced_md: md })} />
-                  <ActionItems meeting={m} reload={() => void load()} />
+                  <ActionItems meeting={m} reload={() => void load()} onSchedule={(t) => setEventFor({ title: t.text, description: `Tarea de «${m.title}»${t.owner ? ` · responsable: ${t.owner}` : ''}${t.due ? ` · plazo: ${t.due}` : ''}` })} />
                 </>
               )}
             </div>
+            {hasContent && !isLive && !enhancing && (
+              <NextSteps meeting={m} onEmail={() => setEmailOpen(true)} onSchedule={() => setEventFor({})} />
+            )}
 
             {m.status === 'importing' && (
               <div className="mt-8 flex items-center gap-2 rounded-xl bg-soft px-4 py-3 text-[13px] text-ink-3">
@@ -440,6 +447,8 @@ export function Note() {
         </aside>
       )}
       <AttendeesModal open={attOpen} onClose={() => setAttOpen(false)} attendees={m.attendees} onSave={(a) => void patch({ attendees: a })} />
+      {emailOpen && <EmailModal meeting={m} onClose={() => setEmailOpen(false)} />}
+      {eventFor && <EventModal meeting={m} initial={eventFor} onClose={() => setEventFor(null)} />}
       {briefOpen && <BriefModal meetingId={id} event={{ title: m.title } as any} onClose={() => setBriefOpen(false)} />}
       {state && !state.models.some((x) => x.available) && hasContent && !m.enhanced_md && (
         <div className="pointer-events-none fixed bottom-24 left-1/2 -translate-x-1/2 text-[12px] text-ink-4">Añade una clave de IA en Ajustes para mejorar las notas.</div>

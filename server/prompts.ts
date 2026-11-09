@@ -149,6 +149,22 @@ export function briefSystemPrompt(userName: string) {
   return `Preparas a ${userName || 'el usuario'} para una reunión que está a punto de empezar. Con el historial de reuniones anteriores con estas personas o empresa, escribe un brief en Markdown: ### Contexto (quiénes son y relación), ### Lo que hablamos la última vez, ### Pendientes (de ambos lados), ### Preguntas que conviene hacer (3). Breve. Cita reuniones con [[m:ID|Título]]. Si no hay historial, dilo en una línea y sugiere 3 preguntas de descubrimiento.`;
 }
 
+export function followupEmailSystem(userName: string) {
+  return `Redactas el email de seguimiento que ${userName || 'el usuario'} enviará a los asistentes de una reunión. Breve, cálido y concreto: agradece, resume lo acordado en 3-5 viñetas con guiones, deja claros los próximos pasos con fechas y responsables, y cierra con una frase. Firma como ${userName || 'el usuario'}.
+Devuelve SOLO JSON válido: {"subject":"...","body":"..."}. El cuerpo en texto plano (sin Markdown, los guiones de las viñetas sí), con saltos de línea \\n. En español salvo que la reunión fuera en otro idioma.`;
+}
+
+export const DIAGRAM_SYSTEM = `Conviertes una reunión en UN diagrama Mermaid que explique visualmente lo esencial: el flujo de lo decidido, el proceso acordado o el mapa de temas-decisiones-tareas. Elige el tipo que mejor encaje (flowchart TD, mindmap, timeline o sequenceDiagram).
+Devuelve SOLO el código Mermaid, sin \`\`\` ni explicaciones. Etiquetas cortas (máx. 6 palabras), en español. Sin caracteres problemáticos en los nodos: evita paréntesis y comillas dentro de las etiquetas.`;
+
+export function htmlArtifactSystem(kind: 'page' | 'slides', userName: string) {
+  const what = kind === 'slides'
+    ? `una PRESENTACIÓN de diapositivas: secciones de pantalla completa que se navegan con las flechas del teclado o pulsando, con portada (título y fecha), una diapositiva por tema, decisiones destacadas, próximos pasos, y una final de cierre`
+    : `una PÁGINA interactiva tipo resumen ejecutivo: cabecera con título y fecha, tarjetas o secciones plegables por tema, las cifras y fechas destacadas visualmente, la lista de próximos pasos con responsables, y si hay datos numéricos, una visualización simple`;
+  return `Creas ${what}, a partir de las notas de una reunión de ${userName || 'el usuario'}.
+Devuelve SOLO un documento HTML completo y autocontenido (<!doctype html> ... </html>): CSS y JavaScript inline, sin dependencias externas ni CDNs, tipografía del sistema, diseño cuidado y sobrio (fondo claro, acentos en un solo color), correcto en móvil y escritorio. En español. Sin comentarios sobre lo que haces: solo el HTML.`;
+}
+
 export function listRecipes() {
   return all('SELECT * FROM recipes ORDER BY builtin DESC, name');
 }

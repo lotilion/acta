@@ -21,6 +21,7 @@ import { anyLlmAvailable } from './llm.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { createMeeting, linkAttendees } from './meetings.ts';
 import { cliStatus } from './cli.ts';
+import { followupEmail, generateArtifact, writeIcs, type ArtifactKind } from './followups.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
 const execFileP = promisify(execFile);
@@ -460,16 +461,19 @@ app.delete('/api/google/accounts/:email', ah(async (req) => {
   bus.emit('event', { type: 'meetings.changed' });
   return { ok: true };
 }));
+const spawnOpen = (cmd: string, args: string[], opts: any = {}) =>
+  spawn(cmd, args, opts).on('error', (e: any) => console.warn('[open]', cmd, e?.message || e));
+
 function openLocal(target: string, reveal = false) {
-  if (process.platform === 'darwin') spawn('open', reveal ? ['-R', target] : [target]);
-  else if (process.platform === 'win32') spawn('explorer.exe', reveal ? [`/select,${target}`] : [target], { windowsHide: true });
-  else spawn('xdg-open', [target], { stdio: 'ignore' });
+  if (process.platform === 'darwin') spawnOpen('open', reveal ? ['-R', target] : [target]);
+  else if (process.platform === 'win32') spawnOpen('explorer.exe', reveal ? [`/select,${target}`] : [target], { windowsHide: true });
+  else spawnOpen('xdg-open', [target], { stdio: 'ignore' });
 }
 
 function openHttp(url: string) {
-  if (process.platform === 'darwin') spawn('open', [url]);
-  else if (process.platform === 'win32') spawn('cmd.exe', ['/d', '/s', '/c', 'start', '', url], { windowsHide: true });
-  else spawn('xdg-open', [url], { stdio: 'ignore' });
+  if (process.platform === 'darwin') spawnOpen('open', [url]);
+  else if (process.platform === 'win32') spawnOpen('cmd.exe', ['/d', '/s', '/c', 'start', '', url], { windowsHide: true });
+  else spawnOpen('xdg-open', [url], { stdio: 'ignore' });
 }
 
 app.post('/api/open-url', ah((req) => {
@@ -495,6 +499,32 @@ app.post('/api/meetings/:id/export-file', ah(async (req) => {
   return { file };
 }));
 app.post('/api/meetings/:id/send', ah(async (req) => sendTo(req.body.target, req.params.id)));
+
+// ---------- next steps: follow-up email, calendar invite, visual artifacts ----------
+app.post('/api/meetings/:id/followup-email', ah(async (req) => followupEmail(req.params.id)));
+
+app.post('/api/meetings/:id/event-ics', ah((req) => {
+  const b = req.body || {};
+  const start = Number(b.startMs);
+  const file = writeIcs(req.params.id, {
+    title: String(b.title || ''),
+    startMs: start,
+    endMs: start + Math.max(5, Number(b.durationMin) || 30) * 60_000,
+    description: String(b.description || ''),
+    location: String(b.location || ''),
+    attendees: Array.isArray(b.attendees) ? b.attendees.filter((a: any) => a?.email) : [],
+  });
+  openLocal(file);
+  return { file };
+}));
+
+app.post('/api/meetings/:id/artifact', ah(async (req) => {
+  const kind = String(req.body?.kind) as ArtifactKind;
+  if (!['diagram', 'page', 'slides'].includes(kind)) throw new Error('Tipo desconocido');
+  const r = await generateArtifact(req.params.id, kind);
+  openLocal(r.file);
+  return r;
+}));
 app.post('/api/open-path', ah((req) => {
   const p = String(req.body.path || '');
   if (!p.startsWith(DATA_DIR)) throw new Error('Ruta no permitida');
