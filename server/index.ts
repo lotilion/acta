@@ -21,7 +21,7 @@ import { anyLlmAvailable } from './llm.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { createMeeting, linkAttendees } from './meetings.ts';
 import { cliStatus } from './cli.ts';
-import { followupEmail, generateArtifact, writeIcs, type ArtifactKind } from './followups.ts';
+import { followupEmail, generateArtifact, generateDiagram, getBrand, saveDiagramHtml, writeIcs } from './followups.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
 const execFileP = promisify(execFile);
@@ -112,6 +112,7 @@ app.get('/api/settings', ah(() => {
     selfEmails: getSetting<string[]>('selfEmails', []),
     language: getSetting('language', 'es'),
     vocabulary: getSetting('vocabulary', ''),
+    corrections: getSetting('corrections', ''),
     sttProvider: getSetting<string | null>('sttProvider', null) || defaultStt(),
     openaiSttModel: getSetting('openaiSttModel', 'gpt-4o-transcribe'),
     localWhisperModel: localModelPath(),
@@ -129,6 +130,7 @@ app.get('/api/settings', ah(() => {
     codexCliEnabled: getSetting('codexCliEnabled', false),
     micDeviceUID: getSetting('micDeviceUID', ''),
     identifySpeakers: getSetting('identifySpeakers', true),
+    brand: getBrand(),
     models: { notes: defaultModel('notes'), chat: defaultModel('chat'), fast: defaultModel('fast') },
     integrations: getSetting('integrations', {}),
     keys,
@@ -145,9 +147,9 @@ app.get('/api/cli/status', ah(async (req) => cliStatus(req.query.refresh === '1'
 
 app.put('/api/settings', ah((req) => {
   const b = req.body || {};
-  const simple = ['userName', 'selfEmails', 'language', 'vocabulary', 'sttProvider', 'openaiSttModel', 'echoCancellation', 'saveAudio', 'autoDetect', 'autoRecord',
+  const simple = ['userName', 'selfEmails', 'language', 'vocabulary', 'corrections', 'sttProvider', 'openaiSttModel', 'echoCancellation', 'saveAudio', 'autoDetect', 'autoRecord',
     'autoStopMinutes', 'autoStopOnMeetingEnd', 'autoEnhance', 'calendarNotifyMinutes', 'calendars', 'macCalendarEnabled', 'claudeCliEnabled', 'codexCliEnabled',
-    'models', 'integrations', 'onboarded', 'localWhisperModel', 'micDeviceUID', 'identifySpeakers'];
+    'models', 'integrations', 'onboarded', 'localWhisperModel', 'micDeviceUID', 'identifySpeakers', 'brand'];
   for (const k of simple) if (k in b) setSetting(k, b[k]);
   if (b.keys) {
     const cur = getSetting<Record<string, string>>('apiKeys', {});
@@ -519,9 +521,17 @@ app.post('/api/meetings/:id/event-ics', ah((req) => {
 }));
 
 app.post('/api/meetings/:id/artifact', ah(async (req) => {
-  const kind = String(req.body?.kind) as ArtifactKind;
-  if (!['diagram', 'page', 'slides'].includes(kind)) throw new Error('Tipo desconocido');
+  const kind = String(req.body?.kind);
+  if (kind === 'diagram') return { ...(await generateDiagram(req.params.id)), brand: getBrand() };
+  if (kind !== 'page' && kind !== 'slides') throw new Error('Tipo desconocido');
   const r = await generateArtifact(req.params.id, kind);
+  openLocal(r.file);
+  return r;
+}));
+
+// The UI renders the Mermaid locally (bundled, offline) and sends back the SVG to save/open.
+app.post('/api/meetings/:id/artifact/diagram-html', ah((req) => {
+  const r = saveDiagramHtml({ title: String(req.body?.title || 'Diagrama'), svg: String(req.body?.svg || ''), mermaid: req.body?.mermaid });
   openLocal(r.file);
   return r;
 }));

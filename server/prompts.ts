@@ -157,12 +157,21 @@ Devuelve SOLO JSON válido: {"subject":"...","body":"..."}. El cuerpo en texto p
 export const DIAGRAM_SYSTEM = `Conviertes una reunión en UN diagrama Mermaid que explique visualmente lo esencial: el flujo de lo decidido, el proceso acordado o el mapa de temas-decisiones-tareas. Elige el tipo que mejor encaje (flowchart TD, mindmap, timeline o sequenceDiagram).
 Devuelve SOLO el código Mermaid, sin \`\`\` ni explicaciones. Etiquetas cortas (máx. 6 palabras), en español. Sin caracteres problemáticos en los nodos: evita paréntesis y comillas dentro de las etiquetas.`;
 
-export function htmlArtifactSystem(kind: 'page' | 'slides', userName: string) {
+export type Brand = { company: string; primary: string; accent: string; background: string; text: string; font: 'sans' | 'serif' };
+
+export function htmlArtifactSystem(kind: 'page' | 'slides', userName: string, brand: Brand) {
   const what = kind === 'slides'
     ? `una PRESENTACIÓN de diapositivas: secciones de pantalla completa que se navegan con las flechas del teclado o pulsando, con portada (título y fecha), una diapositiva por tema, decisiones destacadas, próximos pasos, y una final de cierre`
     : `una PÁGINA interactiva tipo resumen ejecutivo: cabecera con título y fecha, tarjetas o secciones plegables por tema, las cifras y fechas destacadas visualmente, la lista de próximos pasos con responsables, y si hay datos numéricos, una visualización simple`;
+  const fontRule = brand.font === 'serif' ? 'titulares con serifa (Georgia o similar) y cuerpo de sistema' : 'tipografía del sistema';
   return `Creas ${what}, a partir de las notas de una reunión de ${userName || 'el usuario'}.
-Devuelve SOLO un documento HTML completo y autocontenido (<!doctype html> ... </html>): CSS y JavaScript inline, sin dependencias externas ni CDNs, tipografía del sistema, diseño cuidado y sobrio (fondo claro, acentos en un solo color), correcto en móvil y escritorio. En español. Sin comentarios sobre lo que haces: solo el HTML.`;
+IDENTIDAD VISUAL (tokens de marca, respétalos exactamente):
+- Color principal (titulares, botones, elementos destacados): ${brand.primary}
+- Color de acento (detalles, enlaces, barras): ${brand.accent}
+- Fondo: ${brand.background} · Texto: ${brand.text}
+- ${fontRule}
+${brand.company ? `- Firma discretamente como «${brand.company}» en el pie o la portada.` : ''}
+Devuelve SOLO un documento HTML completo y autocontenido (<!doctype html> ... </html>): CSS y JavaScript inline, sin dependencias externas ni CDNs, diseño cuidado y sobrio, correcto en móvil y escritorio. En español. Sin comentarios sobre lo que haces: solo el HTML.`;
 }
 
 export function listRecipes() {

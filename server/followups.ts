@@ -5,7 +5,19 @@ import path from 'node:path';
 import { EXPORT_DIR } from './env.ts';
 import { get, getSetting, parseMeeting, transcriptText } from './db.ts';
 import { completeLLM } from './llm.ts';
-import { DIAGRAM_SYSTEM, followupEmailSystem, htmlArtifactSystem } from './prompts.ts';
+import { DIAGRAM_SYSTEM, followupEmailSystem, htmlArtifactSystem, type Brand } from './prompts.ts';
+
+export function getBrand(): Brand {
+  const b = getSetting<Partial<Brand>>('brand', {});
+  return {
+    company: b.company || '',
+    primary: b.primary || '#5b6f00',
+    accent: b.accent || '#788c15',
+    background: b.background || '#fcfcf8',
+    text: b.text || '#292929',
+    font: b.font === 'serif' ? 'serif' : 'sans',
+  };
+}
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '\n[…recortado…]' : s);
 const slug = (s: string) => s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).toLowerCase() || 'reunion';
@@ -91,39 +103,40 @@ export function writeIcs(meetingId: string, opts: Parameters<typeof makeIcs>[0])
 // ---------- visual artifacts ----------
 export type ArtifactKind = 'diagram' | 'page' | 'slides';
 
-function mermaidPage(title: string, code: string) {
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title.replace(/</g, '&lt;')}</title>
-<style>body{margin:0;background:#fcfcf8;color:#292929;font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;display:flex;flex-direction:column;align-items:center;padding:28px 16px}
-h1{font:500 22px/1.3 Georgia,serif;margin:0 0 18px}.d{max-width:1100px;width:100%;overflow:auto}pre{display:none}</style></head>
-<body><h1>${title.replace(/</g, '&lt;')}</h1><div class="d"><pre class="mermaid">${code.replace(/</g, '&lt;')}</pre></div>
-<script type="module">
-try {
-  const m = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
-  document.querySelector('.mermaid').style.display = 'block';
-  m.default.initialize({ startOnLoad: true, theme: 'neutral' });
-} catch (e) {
-  document.body.insertAdjacentHTML('beforeend', '<p>No se pudo cargar el renderizador (hace falta internet). El código del diagrama:</p><pre style="display:block;white-space:pre-wrap">' + document.querySelector('.mermaid').textContent.replace(/</g, '&lt;') + '</pre>');
-}
-</script></body></html>`;
+/** Diagram: returns the Mermaid code; the UI renders it locally (no CDN) and can export it. */
+export async function generateDiagram(meetingId: string) {
+  const { m, context } = meetingContext(meetingId, 40_000);
+  const raw = await completeLLM({ kind: 'notes', system: DIAGRAM_SYSTEM, messages: [{ role: 'user', content: clip(context, 80_000) }], maxTokens: 1800 });
+  const code = raw.replace(/^```(?:mermaid)?\s*/i, '').replace(/```\s*$/, '').trim();
+  if (!code) throw new Error('El modelo no devolvió un diagrama. Prueba otra vez o con otro modelo.');
+  return { title: m.title || 'Reunión', mermaid: code };
 }
 
-export async function generateArtifact(meetingId: string, kind: ArtifactKind) {
-  const { m, context } = meetingContext(meetingId, kind === 'diagram' ? 40_000 : 60_000);
-  const title = m.title || 'Reunión';
-  let html: string;
-  if (kind === 'diagram') {
-    const raw = await completeLLM({ kind: 'notes', system: DIAGRAM_SYSTEM, messages: [{ role: 'user', content: clip(context, 80_000) }], maxTokens: 1800 });
-    const code = raw.replace(/^```(?:mermaid)?\s*/i, '').replace(/```\s*$/, '').trim();
-    if (!code) throw new Error('El modelo no devolvió un diagrama. Prueba otra vez o con otro modelo.');
-    html = mermaidPage(title, code);
-  } else {
-    const raw = await completeLLM({ kind: 'notes', system: htmlArtifactSystem(kind, getSetting('userName', '')), messages: [{ role: 'user', content: clip(context, 100_000) }], maxTokens: 8000 });
-    const match = raw.match(/<!doctype[\s\S]*<\/html>/i) || raw.match(/<html[\s\S]*<\/html>/i);
-    if (!match) throw new Error('El modelo no devolvió una página completa. Prueba otra vez o con otro modelo.');
-    html = match[0];
-  }
-  const names = { diagram: 'diagrama', page: 'pagina', slides: 'presentacion' } as const;
-  const file = path.join(EXPORT_DIR, `${names[kind]}-${slug(title)}-${Date.now()}.html`);
+/** Saves the already-rendered diagram (inline SVG, no external dependencies) plus the .svg itself. */
+export function saveDiagramHtml(opts: { title: string; svg: string; mermaid?: string }) {
+  if (!opts.svg?.trim().startsWith('<svg')) throw new Error('Falta el SVG del diagrama');
+  const b = getBrand();
+  const esc = (s: string) => s.replace(/</g, '&lt;');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(opts.title)}</title>
+<style>body{margin:0;background:${b.background};color:${b.text};font:15px/1.5 ${b.font === 'serif' ? 'Georgia,serif' : '-apple-system,BlinkMacSystemFont,sans-serif'};display:flex;flex-direction:column;align-items:center;padding:28px 16px}
+h1{font-size:22px;margin:0 0 4px;color:${b.primary}}.c{font-size:12px;color:${b.accent};margin:0 0 18px}.d{max-width:1200px;width:100%;overflow:auto;display:flex;justify-content:center}svg{max-width:100%;height:auto}</style></head>
+<body><h1>${esc(opts.title)}</h1>${b.company ? `<p class="c">${esc(b.company)}</p>` : ''}<div class="d">${opts.svg}</div>
+${opts.mermaid ? `<!-- mermaid:\n${opts.mermaid.replace(/--/g, '—')}\n-->` : ''}</body></html>`;
+  const base = `diagrama-${slug(opts.title)}-${Date.now()}`;
+  const file = path.join(EXPORT_DIR, `${base}.html`);
   fs.writeFileSync(file, html);
+  const svgFile = path.join(EXPORT_DIR, `${base}.svg`);
+  fs.writeFileSync(svgFile, opts.svg);
+  return { file, svgFile };
+}
+
+export async function generateArtifact(meetingId: string, kind: 'page' | 'slides') {
+  const { m, context } = meetingContext(meetingId, 60_000);
+  const title = m.title || 'Reunión';
+  const raw = await completeLLM({ kind: 'notes', system: htmlArtifactSystem(kind, getSetting('userName', ''), getBrand()), messages: [{ role: 'user', content: clip(context, 100_000) }], maxTokens: 8000 });
+  const match = raw.match(/<!doctype[\s\S]*<\/html>/i) || raw.match(/<html[\s\S]*<\/html>/i);
+  if (!match) throw new Error('El modelo no devolvió una página completa. Prueba otra vez o con otro modelo.');
+  const file = path.join(EXPORT_DIR, `${kind === 'slides' ? 'presentacion' : 'pagina'}-${slug(title)}-${Date.now()}.html`);
+  fs.writeFileSync(file, match[0]);
   return { file };
 }

@@ -1,9 +1,128 @@
 // "Siguientes pasos" after a meeting: one-click follow-up email, calendar invite
 // (.ics) and visual artifacts (diagram, interactive page, slide deck).
-import { useEffect, useState } from 'react';
-import { CalendarPlus, LayoutDashboard, Mail, Presentation, Share2, Copy } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { CalendarPlus, Download, LayoutDashboard, Mail, Presentation, Share2, Copy, Image as ImageIcon } from 'lucide-react';
 import { api, type Meeting } from '../api';
 import { Button, Input, Modal, Textarea, toast, cx } from './ui';
+
+type DiagramData = { title: string; mermaid: string; brand: { primary: string; accent: string; background: string; text: string; font: string } };
+
+/** Render the SVG to a PNG blob (2x) over the brand background, so it pastes well anywhere. */
+async function svgToPng(svg: string, background: string): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new window.Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('No se pudo rasterizar el SVG'));
+      i.src = url;
+    });
+    const w = img.naturalWidth || 1200;
+    const h = img.naturalHeight || 800;
+    const canvas = document.createElement('canvas');
+    canvas.width = w * 2;
+    canvas.height = h * 2;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = background || '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('No se pudo generar el PNG'))), 'image/png'));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+export function DiagramModal({ meeting, data, onClose }: { meeting: Meeting; data: DiagramData; onClose: () => void }) {
+  const [svg, setSvg] = useState('');
+  const [error, setError] = useState('');
+  const holder = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        const b = data.brand;
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: 'base',
+          fontFamily: b.font === 'serif' ? 'Georgia, serif' : '-apple-system, BlinkMacSystemFont, sans-serif',
+          themeVariables: {
+            primaryColor: b.background,
+            primaryTextColor: b.text,
+            primaryBorderColor: b.primary,
+            lineColor: b.primary,
+            secondaryColor: b.accent,
+            tertiaryColor: b.background,
+            cScale0: b.primary, cScale1: b.accent,
+          },
+          flowchart: { htmlLabels: false },
+        });
+        const r = await mermaid.render(`acta-diagram-${Date.now()}`, data.mermaid);
+        if (alive) setSvg(r.svg);
+      } catch (e: any) {
+        if (alive) setError(String(e?.message || e));
+      }
+    })();
+    return () => { alive = false; };
+  }, [data]);
+
+  useEffect(() => { if (holder.current) holder.current.innerHTML = svg; }, [svg]);
+
+  const copyPng = async () => {
+    try {
+      const blob = await svgToPng(svg, data.brand.background);
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      toast('Imagen copiada: pégala en tu email o presentación.');
+    } catch (e: any) { toast(e.message, { tone: 'error' }); }
+  };
+  const downloadPng = async () => {
+    try {
+      const blob = await svgToPng(svg, data.brand.background);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${(data.title || 'diagrama').replace(/[^\w\- ]+/g, '')}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (e: any) { toast(e.message, { tone: 'error' }); }
+  };
+  const saveHtml = async () => {
+    try {
+      await api.post(`/api/meetings/${meeting.id}/artifact/diagram-html`, { title: data.title, svg, mermaid: data.mermaid });
+      toast('Guardado en Exportaciones y abierto en el navegador.');
+    } catch (e: any) { toast(e.message, { tone: 'error' }); }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={<span className="flex items-center gap-2"><Share2 size={15} className="text-accent-ink" />Diagrama · {data.title}</span>} width={860}>
+      <div className="p-5">
+        {error ? (
+          <div>
+            <div className="mb-2 text-[13px] text-danger">El diagrama no se pudo dibujar: {error}</div>
+            <pre className="max-h-72 overflow-auto rounded-lg bg-sunken p-3 text-[12px]">{data.mermaid}</pre>
+            <div className="mt-3 flex justify-end">
+              <Button variant="outline" onClick={() => void navigator.clipboard.writeText(data.mermaid).then(() => toast('Código Mermaid copiado'))}><Copy size={13} />Copiar código</Button>
+            </div>
+          </div>
+        ) : !svg ? (
+          <div className="space-y-2 py-10 text-center text-[13px] text-ink-4">Dibujando…</div>
+        ) : (
+          <>
+            <div ref={holder} className="flex max-h-[55vh] justify-center overflow-auto rounded-xl border border-hairline p-3" style={{ background: data.brand.background }} />
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+              <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(data.mermaid).then(() => toast('Código Mermaid copiado'))}><Copy size={13} />Código</Button>
+              <Button variant="outline" onClick={() => void downloadPng()}><Download size={13} />PNG</Button>
+              <Button variant="outline" onClick={() => void saveHtml()}>Guardar página</Button>
+              <Button variant="primary" onClick={() => void copyPng()}><ImageIcon size={13} />Copiar imagen</Button>
+            </div>
+            <div className="mt-2 text-[11.5px] text-ink-4">«Copiar imagen» lo deja listo para pegar en un email o una diapositiva. Los colores salen de Ajustes → Marca.</div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 function toLocalInput(ms: number) {
   const d = new Date(ms);
@@ -127,13 +246,15 @@ export function EventModal({ meeting, initial, onClose }: { meeting: Meeting; in
 
 export function NextSteps({ meeting, onEmail, onSchedule }: { meeting: Meeting; onEmail: () => void; onSchedule: () => void }) {
   const [generating, setGenerating] = useState<string | null>(null);
+  const [diagram, setDiagram] = useState<DiagramData | null>(null);
   const makeArtifact = async (kind: 'diagram' | 'page' | 'slides', label: string) => {
     if (generating) return;
     setGenerating(kind);
-    toast(`Generando ${label}… tarda un poco y se abrirá sola en el navegador.`);
+    toast(kind === 'diagram' ? 'Generando el diagrama… se abrirá aquí mismo al terminar.' : `Generando ${label}… tarda un poco y se abrirá sola en el navegador.`);
     try {
-      await api.post(`/api/meetings/${meeting.id}/artifact`, { kind });
-      toast(`${label.charAt(0).toUpperCase() + label.slice(1)} lista: abierta en el navegador y guardada en Exportaciones.`);
+      const r = await api.post<any>(`/api/meetings/${meeting.id}/artifact`, { kind });
+      if (kind === 'diagram') setDiagram(r as DiagramData);
+      else toast(`${label.charAt(0).toUpperCase() + label.slice(1)} lista: abierta en el navegador y guardada en Exportaciones.`);
     } catch (e: any) {
       toast(e.message, { tone: 'error' });
     } finally {
@@ -162,6 +283,7 @@ export function NextSteps({ meeting, onEmail, onSchedule }: { meeting: Meeting; 
           </button>
         ))}
       </div>
+      {diagram && <DiagramModal meeting={meeting} data={diagram} onClose={() => setDiagram(null)} />}
     </div>
   );
 }

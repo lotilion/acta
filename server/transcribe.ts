@@ -87,6 +87,26 @@ export function cleanTranscript(text: string) {
   return t;
 }
 
+// Permanent corrections the user teaches Acta ("LAIN = LEINN"): applied to every
+// utterance after transcription, whole words only, case-insensitive.
+export function applyCorrections(text: string) {
+  const raw = getSetting<string>('corrections', '');
+  if (!text || !raw.trim()) return text;
+  let out = text;
+  for (const line of raw.split('\n')) {
+    const parts = line.split(/=|->|→/);
+    if (parts.length < 2) continue;
+    const from = parts[0].trim();
+    const to = parts.slice(1).join('=').trim();
+    if (!from || !to || from.toLowerCase() === to.toLowerCase()) continue;
+    const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try {
+      out = out.replace(new RegExp(`(?<![\\p{L}\\p{N}])${esc}(?![\\p{L}\\p{N}])`, 'giu'), to);
+    } catch { /* invalid pattern in one line: skip it */ }
+  }
+  return out;
+}
+
 export async function transcribe(pcm: Int16Array, opts: { provider?: SttProvider; language?: string; vocabulary?: string } = {}): Promise<string> {
   const provider = opts.provider || defaultStt();
   const language = opts.language && opts.language !== 'auto' ? opts.language : undefined;
@@ -132,5 +152,6 @@ export async function transcribe(pcm: Int16Array, opts: { provider?: SttProvider
       fs.rmSync(tmp, { force: true });
     }
   }
-  return cleanTranscript(text);
+  const cleaned = cleanTranscript(text);
+  return cleaned ? applyCorrections(cleaned) : cleaned;
 }

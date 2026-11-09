@@ -169,7 +169,12 @@ export function SettingsPage() {
         <div className="px-5 py-3.5">
           <div className="text-[13px] text-ink">Vocabulario</div>
           <div className="mb-2 mt-0.5 text-[12px] text-ink-4">Nombres, marcas y términos que deben salir bien escritos.</div>
-          <Textarea rows={2} defaultValue={s.vocabulary} onBlur={(e) => void save({ vocabulary: e.target.value })} placeholder="Nombre de una empresa, un producto, una sigla" />
+          <Textarea rows={2} defaultValue={s.vocabulary} onBlur={(e) => void save({ vocabulary: e.target.value })} placeholder="LEINN, nombre de tu empresa, una sigla" />
+        </div>
+        <div className="px-5 py-3.5">
+          <div className="text-[13px] text-ink">Correcciones permanentes</div>
+          <div className="mb-2 mt-0.5 text-[12px] text-ink-4">Cuando el motor oye mal una palabra, enséñasela aquí y se corrige en todas las transcripciones futuras. Una por línea: <code>lo que oye = lo correcto</code>.</div>
+          <Textarea rows={3} defaultValue={s.corrections} onBlur={(e) => void save({ corrections: e.target.value })} placeholder={'LAIN = LEINN\nteam labs = TeamLabs'} />
         </div>
         {state?.platform !== 'win32' && (
           <Row label="Micrófono">
@@ -214,6 +219,25 @@ export function SettingsPage() {
           onToggle={(v) => void save({ codexCliEnabled: v })}
           onRecheck={recheckCli}
         />
+      </Card>
+
+      <Card id="marca" title="Marca" desc="Identidad visual de lo que Acta genera: diagramas, presentaciones y páginas. Ponle los colores de tu empresa o del cliente.">
+        <Row label="Nombre (empresa o cliente)" hint="Aparece como firma discreta en lo generado.">
+          <Input className="w-56" defaultValue={s.brand?.company || ''} onBlur={(e) => void save({ brand: { ...s.brand, company: e.target.value } })} placeholder="TeamLabs" />
+        </Row>
+        {([['primary', 'Color principal', 'Titulares, nodos y elementos destacados.'], ['accent', 'Color de acento', 'Detalles, líneas y barras.'], ['background', 'Fondo', 'Fondo de diagramas y páginas.']] as const).map(([k, label, hint]) => (
+          <Row key={k} label={label} hint={hint}>
+            <div className="flex items-center gap-2">
+              <input type="color" value={s.brand?.[k] || '#000000'} onChange={(e) => void save({ brand: { ...s.brand, [k]: e.target.value } })} className="h-8 w-12 cursor-pointer rounded border border-hairline-strong bg-raised" />
+              <code className="text-[12px] text-ink-4">{s.brand?.[k]}</code>
+            </div>
+          </Row>
+        ))}
+        <Row label="Tipografía">
+          <Select value={s.brand?.font || 'sans'} onChange={(e) => void save({ brand: { ...s.brand, font: e.target.value } })}>
+            <option value="sans">Moderna (sans serif)</option><option value="serif">Editorial (con serifa)</option>
+          </Select>
+        </Row>
       </Card>
 
       <Card id="claves" title="Claves" desc="Pega la clave de tu propia cuenta. Queda en la base de datos de Acta, en este Mac, y no se comparte con nadie. Con Groq u OpenAI basta para transcribir y para las notas.">
