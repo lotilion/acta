@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { HELPER_BIN } from './env.ts';
-import { getSetting } from './db.ts';
+import { get, getSetting } from './db.ts';
 import { bus, activeSession, helperAvailable, startRecording, stopRecording } from './recorder.ts';
 import { upcomingEvents, type CalEvent } from './calendar.ts';
 import { createMeeting } from './meetings.ts';
@@ -146,9 +146,25 @@ export function startCalendarWatcher() {
         }
       }
     } catch { /* calendar errors surface in the UI */ }
+    stopAfterCalendarEnd();
   };
   setInterval(tick, 30_000);
   setTimeout(tick, 3000);
+}
+
+// Safety net for calls the window detector misses (e.g. an unrecognized browser tab):
+// when the note is linked to a calendar event and the event ended a while ago, stop.
+const CALENDAR_END_GRACE_MS = 10 * 60_000;
+function stopAfterCalendarEnd() {
+  const session = activeSession();
+  if (!session || session.paused) return;
+  if (!getSetting('autoStopOnMeetingEnd', true)) return;
+  if (detectorState.meetings.length) return; // a recognized call is still on screen
+  const m = get('SELECT calendar_end FROM meetings WHERE id = ?', session.meetingId);
+  if (!m?.calendar_end || Date.now() - m.calendar_end < CALENDAR_END_GRACE_MS) return;
+  if (Date.now() - session.lastActivity < 2 * 60_000) return; // someone is still talking: the meeting ran over
+  bus.emit('event', { type: 'recording.autostop', meetingId: session.meetingId, reason: 'La reunión del calendario terminó hace 10 minutos' });
+  void stopRecording('meeting-ended');
 }
 
 export function stopDetector() {

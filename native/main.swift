@@ -270,7 +270,9 @@ func detectMeetings() -> [[String: String]] {
         let t = w.title
         var app: String?
         if browserBundles.contains(bundle) {
-            if t.hasPrefix("Meet - ") || t.contains("Google Meet") || t.range(of: "meet.google.com", options: .caseInsensitive) != nil { app = "Google Meet" }
+            // The Meet tab title uses several dash characters depending on locale/version:
+            // "Meet - xxx", "Meet – xxx" (en dash), "Meet — xxx" (em dash).
+            if t.hasPrefix("Meet - ") || t.hasPrefix("Meet – ") || t.hasPrefix("Meet — ") || t.contains("Google Meet") || t.range(of: "meet.google.com", options: .caseInsensitive) != nil { app = "Google Meet" }
             else if t.contains("Microsoft Teams") && (t.contains("Meeting") || t.contains("Reunión") || t.contains("Call") || t.contains("Llamada")) { app = "Microsoft Teams" }
             else if t.contains("Whereby") { app = "Whereby" }
             else if t.contains("Riverside") { app = "Riverside" }

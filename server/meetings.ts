@@ -52,9 +52,9 @@ export function createMeeting(opts: CreateMeetingOpts = {}): { id: string; exist
   const t = now();
   const attendees = ev?.attendees || opts.attendees || [];
   run(
-    `INSERT INTO meetings(id, title, created_at, updated_at, calendar_event_id, calendar_start, attendees, folder_id, template_id, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    id, opts.title ?? ev?.title ?? '', t, t, ev?.id || null, ev?.start || null, JSON.stringify(attendees), opts.folderId || null, opts.templateId || null, opts.source || 'live',
+    `INSERT INTO meetings(id, title, created_at, updated_at, calendar_event_id, calendar_start, calendar_end, attendees, folder_id, template_id, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id, opts.title ?? ev?.title ?? '', t, t, ev?.id || null, ev?.start || null, ev?.end || null, JSON.stringify(attendees), opts.folderId || null, opts.templateId || null, opts.source || 'live',
   );
   linkAttendees(id, attendees);
   reindexMeeting(id);
