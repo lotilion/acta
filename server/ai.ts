@@ -182,22 +182,38 @@ export async function identifySpeakers(meetingId: string) {
   if (segs.length < 2) return { changed: 0 };
   const m = parseMeeting(get('SELECT title, attendees, source FROM meetings WHERE id = ?', meetingId));
   const me = userName();
-  const attendees = (m?.attendees || []).map((a: any) => a.name).filter(Boolean);
+  // Names AND emails: the email handle often reveals the name even when nobody says it aloud.
+  const attendees = (m?.attendees || [])
+    .filter((a: any) => !a.self)
+    .map((a: any) => (a.name && a.email ? `${a.name} <${a.email}>` : a.name || a.email))
+    .filter(Boolean);
   const imported = m?.source === 'import';
   let changed = 0;
+  const system = `Identificas quién habla en cada fragmento de una conversación transcrita. El usuario se llama ${me}.
+${attendees.length ? `Asistentes según el calendario (nombre y email; el email suele revelar el nombre real): ${attendees.join(', ')}.` : ''}
+PISTAS que debes usar, por orden de fiabilidad:
+1. Presentaciones y saludos («Hola, soy Marc», «Hola Laura» → quien responde es Laura).
+2. A quién se dirige cada frase y quién responde (turnos de conversación).
+3. La lista de asistentes: si solo hay un asistente además de ${me}, todo lo que no es de ${me} es de esa persona. Usa su nombre del calendario o el de su email.
+4. Referencias en tercera persona que descartan hablantes («que lo mire Marc» lo dice alguien que no es Marc).
+Devuelve SOLO JSON {"speakers":[...]} con EXACTAMENTE una etiqueta por fragmento, en el mismo orden y el mismo número. Usa "Yo" para ${me}. Prefiere nombres propios; solo si es imposible, "Persona 1", "Persona 2"… de forma consistente. Los fragmentos marcados [Yo, confirmado] son siempre "Yo".`;
   for (let off = 0; off < segs.length; off += 220) {
     const chunk = segs.slice(off, off + 220);
     const listing = chunk.map((s, i) => `${i}. ${s.speaker === 'me' && !imported ? '[Yo, confirmado] ' : ''}${s.text}`).join('\n');
-    const raw = await completeLLM({
-      kind: 'fast',
-      system: `Identificas quién habla en cada fragmento de una conversación transcrita. El usuario se llama ${me}. ${attendees.length ? `Asistentes conocidos: ${attendees.join(', ')}.` : ''}
-Devuelve SOLO JSON {"speakers":[...]} con exactamente una etiqueta por fragmento, en el mismo orden. Usa "Yo" para ${me}. Usa nombres propios cuando el contexto los revele (alguien saluda «Hola Laura» → quien responde es Laura). Si no se puede saber, usa "Persona 1", "Persona 2"… de forma consistente. Los fragmentos marcados [Yo, confirmado] son siempre "Yo".`,
-      messages: [{ role: 'user', content: `Reunión: ${m?.title || ''}\n\n${listing}` }],
-      maxTokens: 4000,
-    });
     let labels: string[] = [];
-    try { labels = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)).speakers || []; } catch { continue; }
-    if (labels.length !== chunk.length) continue;
+    for (let attempt = 0; attempt < 2 && labels.length !== chunk.length; attempt++) {
+      const raw = await completeLLM({
+        kind: attempt === 0 ? 'fast' : 'chat',
+        system: attempt === 0 ? system : `${system}\nIMPORTANTE: la lista "speakers" debe tener exactamente ${chunk.length} elementos.`,
+        messages: [{ role: 'user', content: `Reunión: ${m?.title || ''}\nFragmentos: ${chunk.length}\n\n${listing}` }],
+        maxTokens: 4000,
+      }).catch(() => '');
+      try { labels = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)).speakers || []; } catch { labels = []; }
+    }
+    if (labels.length !== chunk.length) {
+      console.warn('[speakers] etiquetas no cuadran:', labels.length, 'vs', chunk.length);
+      continue;
+    }
     chunk.forEach((s, i) => {
       const l = String(labels[i] || '').trim();
       if (!l) return;

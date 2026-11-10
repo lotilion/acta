@@ -134,6 +134,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
 
 // Additive migrations for databases created by older versions.
 try { db.exec('ALTER TABLE folders ADD COLUMN brand TEXT'); } catch { /* column exists */ }
+try { db.exec('ALTER TABLE meetings ADD COLUMN calendar_end INTEGER'); } catch { /* column exists */ }
 
 export const uid = (prefix = '') => prefix + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 export const now = () => Date.now();
